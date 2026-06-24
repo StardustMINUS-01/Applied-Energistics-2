@@ -149,6 +149,57 @@ public class CraftingCpuHelper {
         return inputHolder;
     }
 
+    @Nullable
+    public static KeyCounter[] extractPatternInputs(
+            IPatternDetails details,
+            ICraftingInventory sourceInv,
+            Level level,
+            long times,
+            KeyCounter expectedOutputs,
+            KeyCounter expectedContainerItems) {
+        if (times <= 0) {
+            throw new IllegalArgumentException("times must be positive");
+        }
+
+        var inputs = details.getInputs();
+        KeyCounter[] inputHolder = new KeyCounter[inputs.length];
+        boolean found = true;
+
+        for (int x = 0; x < inputs.length; x++) {
+            var list = inputHolder[x] = new KeyCounter();
+            long remainingMultiplier = inputs[x].getMultiplier() * times;
+            for (var template : getValidItemTemplates(sourceInv, inputs[x], level)) {
+                long extracted = extractTemplates(sourceInv, template, remainingMultiplier);
+                list.add(template.key(), extracted * template.amount());
+
+                var containerItem = inputs[x].getRemainingKey(template.key());
+                if (containerItem != null) {
+                    expectedContainerItems.add(containerItem, extracted);
+                }
+
+                remainingMultiplier -= extracted;
+                if (remainingMultiplier == 0)
+                    break;
+            }
+
+            if (remainingMultiplier > 0) {
+                found = false;
+                break;
+            }
+        }
+
+        if (!found) {
+            reinjectPatternInputs(sourceInv, inputHolder);
+            return null;
+        }
+
+        for (var output : details.getOutputs()) {
+            expectedOutputs.add(output.what(), output.amount() * times);
+        }
+
+        return inputHolder;
+    }
+
     public static void reinjectPatternInputs(ICraftingInventory sourceInv,
             KeyCounter[] inputHolder) {
         for (var list : inputHolder) {

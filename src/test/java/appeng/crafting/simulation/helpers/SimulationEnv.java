@@ -9,9 +9,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
-import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 import com.google.common.collect.ImmutableCollection;
@@ -90,13 +88,7 @@ public class SimulationEnv {
 
     public ICraftingPlan runSimulation(GenericStack what, CalculationStrategy strategy) {
         var calculation = new CraftingCalculation(mock(Level.class), gridMock, simulationRequester, what, strategy);
-        try {
-            var calculationFuture = Executors.newSingleThreadExecutor().submit(calculation::run);
-            calculation.simulateFor(1000000000);
-            return calculationFuture.get(1000, TimeUnit.MILLISECONDS);
-        } catch (Exception e) {
-            throw new RuntimeException(e);
-        }
+        return calculation.run();
     }
 
     private final IGrid gridMock = createGridMock();

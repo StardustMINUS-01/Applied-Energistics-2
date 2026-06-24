@@ -10,6 +10,7 @@ import appeng.client.gui.Icon;
 import appeng.client.gui.WidgetContainer;
 import appeng.client.gui.style.Blitter;
 import appeng.client.gui.widgets.ActionButton;
+import appeng.client.gui.widgets.ProcessingPatternScaleButton;
 import appeng.client.gui.widgets.Scrollbar;
 import appeng.core.localization.GuiText;
 import appeng.menu.SlotSemantics;
@@ -19,6 +20,7 @@ public class ProcessingEncodingPanel extends EncodingModePanel {
 
     private final ActionButton clearBtn;
     private final ActionButton cycleOutputBtn;
+    private final ProcessingPatternScaleButton[] scaleButtons;
     private final Scrollbar scrollbar;
 
     public ProcessingEncodingPanel(PatternEncodingTermScreen<?> screen, WidgetContainer widgets) {
@@ -37,11 +39,26 @@ public class ProcessingEncodingPanel extends EncodingModePanel {
         this.cycleOutputBtn.setDisableBackground(true);
         widgets.add("processingCycleOutput", this.cycleOutputBtn);
 
+        this.scaleButtons = new ProcessingPatternScaleButton[] {
+                createScaleButton("processingScaleX2", 2),
+                createScaleButton("processingScaleX3", 3),
+                createScaleButton("processingScaleX5", 5),
+                createScaleButton("processingScaleDiv2", -2),
+                createScaleButton("processingScaleDiv3", -3),
+                createScaleButton("processingScaleDiv5", -5),
+        };
+
         this.scrollbar = widgets.addScrollBar("processingPatternModeScrollbar", Scrollbar.SMALL);
         // The scrollbar ranges from 0 to the number of rows not visible
         this.scrollbar.setRange(0, menu.getProcessingInputSlots().length / 3 - 3, 3);
         this.scrollbar.setCaptureMouseWheel(false);
 
+    }
+
+    private ProcessingPatternScaleButton createScaleButton(String id, int factor) {
+        var button = new ProcessingPatternScaleButton(factor, () -> menu.scaleProcessingPattern(factor));
+        widgets.add(id, button);
+        return button;
     }
 
     @Override
@@ -102,6 +119,9 @@ public class ProcessingEncodingPanel extends EncodingModePanel {
         scrollbar.setVisible(visible);
         clearBtn.setVisibility(visible);
         cycleOutputBtn.setVisibility(menu.canCycleProcessingOutputs());
+        for (var scaleButton : scaleButtons) {
+            scaleButton.visible = visible;
+        }
 
         screen.setSlotsHidden(SlotSemantics.PROCESSING_INPUTS, !visible);
         screen.setSlotsHidden(SlotSemantics.PROCESSING_OUTPUTS, !visible);

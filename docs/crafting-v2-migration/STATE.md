@@ -1361,3 +1361,26 @@ GTNH 参考代码：
   - 提交 `crafting-v2-migration` 分支。
   - push 到 fork 的 `crafting-v2-migration` 分支。
   - 合并回 fork 的 `1.21.1` 分支，并 push `1.21.1`。
+
+## 48. 最新工作记录（2026-06-24，fork 分支推送与默认分支合并）
+
+- 当前目标：
+  - 将 `crafting-v2-migration` 工作分支推送到用户 fork，并合并回 fork 默认分支 `1.21.1`。
+- 已完成事项：
+  - 提交工作分支：
+    - commit：`2101c3911 Overhaul AE2 crafting planner and execution`
+  - 推送工作分支到 fork：
+    - `git push -u origin crafting-v2-migration`
+    - 远端：`https://github.com/StardustMINUS-01/Applied-Energistics-2.git`
+  - 切回 `1.21.1`，从 `origin/1.21.1` 确认同步后执行非快进合并：
+    - merge commit：`bc2432266 Merge crafting v2 migration`
+  - 在合并后的 `1.21.1` 上再次运行完整构建：
+    - `$env:JAVA_HOME='C:\Program Files\Java\jdk-21_windows-x64_bin\jdk-21.0.2'; $env:Path="$env:JAVA_HOME\bin;$env:Path"; & 'C:\Users\Administrator\.gradle\wrapper\dists\gradle-8.12.1-bin\eumc4uhoysa37zql93vfjkxy0\gradle-8.12.1\bin\gradle.bat' --no-daemon build`
+    - 结果：`BUILD SUCCESSFUL in 24s`，`23 actionable tasks: 9 executed, 14 up-to-date`。
+  - 推送默认分支到 fork：
+    - `git push origin 1.21.1`
+    - 结果：`fd8b717a4..bc2432266  1.21.1 -> 1.21.1`
+- 远端约束确认：
+  - 本次操作只存在并使用 `origin` 远端。
+  - `origin` 的 fetch/push URL 均为 `https://github.com/StardustMINUS-01/Applied-Energistics-2.git`。
+  - 未添加上游远端，未执行任何上游推送命令。

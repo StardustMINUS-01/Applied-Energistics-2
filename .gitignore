@@ -25,6 +25,7 @@
 # include sourcecode
 !docs/
 !src/
+/docs/crafting-v2-migration/
 /src/generated/resources/.cache/
 !/guidebook
 /guidebook/sandbox

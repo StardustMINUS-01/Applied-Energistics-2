@@ -3,6 +3,8 @@ package appeng.client.gui;
 import java.util.ArrayList;
 import java.util.List;
 
+import org.lwjgl.glfw.GLFW;
+
 import net.minecraft.world.inventory.Slot;
 
 import appeng.client.gui.style.StyleManager;
@@ -31,6 +33,11 @@ public class AESubScreen<C extends AEBaseMenu, P extends AEBaseScreen<C>> extend
         return parent;
     }
 
+    @Override
+    protected TerminalGuiScale getTerminalGuiScale() {
+        return parent.getTerminalGuiScale();
+    }
+
     protected final void returnToParent() {
         // Remove any client-side slots added by this screen
         for (var clientSideSlot : clientSideSlots) {
@@ -45,6 +52,16 @@ public class AESubScreen<C extends AEBaseMenu, P extends AEBaseScreen<C>> extend
     }
 
     protected void onReturnToParent() {
+    }
+
+    @Override
+    public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+        if (keyCode == GLFW.GLFW_KEY_ESCAPE) {
+            returnToParent();
+            return true;
+        }
+
+        return super.keyPressed(keyCode, scanCode, modifiers);
     }
 
     protected final Slot addClientSideSlot(Slot slot, SlotSemantic semantic) {

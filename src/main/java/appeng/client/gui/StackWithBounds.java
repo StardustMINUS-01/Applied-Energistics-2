@@ -18,7 +18,8 @@ public record StackWithBounds(GenericStack stack, Rect2i bounds) {
         if (stack != null) {
             return new StackWithBounds(
                     stack,
-                    new Rect2i(screen.getGuiLeft() + slot.x, screen.getGuiTop() + slot.y, 16, 16));
+                    screen.toMinecraftRect(screen.getVirtualGuiLeft() + slot.x, screen.getVirtualGuiTop() + slot.y,
+                            16, 16));
         }
         return null;
     }

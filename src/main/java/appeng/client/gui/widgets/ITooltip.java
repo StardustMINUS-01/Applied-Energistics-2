@@ -21,6 +21,9 @@ package appeng.client.gui.widgets;
 import java.util.Collections;
 import java.util.List;
 
+import org.jetbrains.annotations.Nullable;
+
+import net.minecraft.client.gui.screens.inventory.tooltip.ClientTooltipPositioner;
 import net.minecraft.client.renderer.Rect2i;
 import net.minecraft.network.chat.Component;
 
@@ -43,6 +46,19 @@ public interface ITooltip {
      * Rectangle in screen relative coordinates which triggers the toooltip.
      */
     Rect2i getTooltipArea();
+
+    default int getTooltipX(int mouseX) {
+        return mouseX;
+    }
+
+    default int getTooltipY(int mouseY) {
+        return mouseY;
+    }
+
+    @Nullable
+    default ClientTooltipPositioner getTooltipPositioner() {
+        return null;
+    }
 
     /**
      * @return true if button being drawn

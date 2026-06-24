@@ -2,9 +2,11 @@ package appeng.client.gui.widgets;
 
 import java.util.List;
 
+import net.minecraft.client.gui.screens.inventory.tooltip.ClientTooltipPositioner;
 import net.minecraft.client.renderer.Rect2i;
 import net.minecraft.network.chat.Component;
 
+import appeng.client.gui.AboveWidgetTooltipPositioner;
 import appeng.core.localization.ButtonToolTips;
 
 public class ProcessingPatternScaleButton extends AE2Button implements ITooltip {
@@ -32,9 +34,14 @@ public class ProcessingPatternScaleButton extends AE2Button implements ITooltip 
         return visible;
     }
 
+    @Override
+    public ClientTooltipPositioner getTooltipPositioner() {
+        return new AboveWidgetTooltipPositioner(getTooltipArea());
+    }
+
     private static String label(int factor) {
         if (factor > 0) {
-            return "x" + factor;
+            return "\u00d7" + factor;
         }
         return "\u00f7" + -factor;
     }

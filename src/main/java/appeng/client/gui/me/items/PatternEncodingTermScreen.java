@@ -95,6 +95,11 @@ public class PatternEncodingTermScreen<C extends PatternEncodingTermMenu> extend
 
     @Override
     public boolean mouseClicked(double xCoord, double yCoord, int btn) {
+        return mouseClickedTerminal(toTerminalMouseX(xCoord), toTerminalMouseY(yCoord), btn);
+    }
+
+    @Override
+    protected boolean mouseClickedTerminal(double xCoord, double yCoord, int btn) {
         // handler for middle mouse button crafting in survival mode
         if (this.minecraft.options.keyPickItem.matchesMouse(btn)) {
             var slot = this.findSlot(xCoord, yCoord);
@@ -116,7 +121,7 @@ public class PatternEncodingTermScreen<C extends PatternEncodingTermMenu> extend
             }
         }
 
-        return super.mouseClicked(xCoord, yCoord, btn);
+        return super.mouseClickedTerminal(xCoord, yCoord, btn);
     }
 
     /**

@@ -503,6 +503,8 @@
   "gui.ae2.TankCapacity": "容量：%d",
   "gui.ae2.Terminal": "终端",
   "gui.ae2.TerminalSettingsClearGridOnClose": "关闭终端时自动清空合成槽（如果可行）",
+  "gui.ae2.TerminalSettingsGuiScale": "终端界面尺寸：%s",
+  "gui.ae2.TerminalSettingsGuiScaleSync": "同步 MC",
   "gui.ae2.TerminalSettingsNotifyForFinishedJobs": "自动合成任务完成时发送提醒（需要无线终端）",
   "gui.ae2.TerminalSettingsPinAutoCraftedItems": "置顶自动合成得到的物品",
   "gui.ae2.TerminalSettingsTitle": "终端设置",

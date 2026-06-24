@@ -69,6 +69,7 @@ import appeng.client.Point;
 import appeng.client.gui.AEBaseScreen;
 import appeng.client.gui.AESubScreen;
 import appeng.client.gui.Icon;
+import appeng.client.gui.TerminalGuiScale;
 import appeng.client.gui.style.Blitter;
 import appeng.client.gui.style.ScreenStyle;
 import appeng.client.gui.style.TerminalStyle;
@@ -221,6 +222,11 @@ public class MEStorageScreen<C extends MEStorageMenu>
         return ViewCellItem.createFilter(AEKeyFilter.none(), viewCells);
     }
 
+    @Override
+    protected TerminalGuiScale getTerminalGuiScale() {
+        return TerminalGuiScale.of(config.getTerminalGuiScale());
+    }
+
     protected void handleGridInventoryEntryMouseClick(@Nullable GridInventoryEntry entry,
             int mouseButton,
             ClickType clickType) {
@@ -340,6 +346,7 @@ public class MEStorageScreen<C extends MEStorageMenu>
 
     @Override
     public void init() {
+        applyTerminalGuiScale();
         var availableHeight = height - 2 * AEConfig.instance().getTerminalMargin();
         this.rows = Math.max(MIN_ROWS, config.getTerminalStyle().getRows(style.getPossibleRows(availableHeight)));
 
@@ -505,6 +512,11 @@ public class MEStorageScreen<C extends MEStorageMenu>
 
     @Override
     public boolean mouseClicked(double xCoord, double yCoord, int btn) {
+        return mouseClickedTerminal(toTerminalMouseX(xCoord), toTerminalMouseY(yCoord), btn);
+    }
+
+    @Override
+    protected boolean mouseClickedTerminal(double xCoord, double yCoord, int btn) {
         // Right-clicking on the search field should clear it
         if (this.searchField.isMouseOver(xCoord, yCoord) && btn == 1) {
             this.searchField.setValue("");
@@ -521,11 +533,17 @@ public class MEStorageScreen<C extends MEStorageMenu>
             }
         }
 
-        return super.mouseClicked(xCoord, yCoord, btn);
+        return super.mouseClickedTerminal(xCoord, yCoord, btn);
     }
 
     @Override
     public boolean mouseScrolled(double x, double y, double deltaX, double deltaY) {
+        return mouseScrolledTerminal(toTerminalMouseX(x), toTerminalMouseY(y),
+                toTerminalMouseDelta(deltaX), toTerminalMouseDelta(deltaY));
+    }
+
+    @Override
+    protected boolean mouseScrolledTerminal(double x, double y, double deltaX, double deltaY) {
         if (deltaY != 0 && hasShiftDown()) {
             if (this.findSlot(x, y) instanceof RepoSlot repoSlot) {
                 GridInventoryEntry entry = repoSlot.getEntry();
@@ -541,7 +559,7 @@ public class MEStorageScreen<C extends MEStorageMenu>
                 return true;
             }
         }
-        return super.mouseScrolled(x, y, deltaX, deltaY);
+        return super.mouseScrolledTerminal(x, y, deltaX, deltaY);
     }
 
     @Override
@@ -838,9 +856,11 @@ public class MEStorageScreen<C extends MEStorageMenu>
     }
 
     private void reinitalize() {
+        var portableThirdPartyWidgets = getPortableThirdPartyWidgets();
         storeState();
         new ArrayList<>(this.children()).forEach(this::removeWidget);
         this.init();
+        addPortableThirdPartyWidgets(portableThirdPartyWidgets);
     }
 
     private boolean isCloseHotkey(int keyCode, int scanCode) {

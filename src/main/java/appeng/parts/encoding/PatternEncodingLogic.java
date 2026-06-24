@@ -18,12 +18,17 @@
 
 package appeng.parts.encoding;
 
+import java.util.ArrayList;
+import java.util.EnumMap;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 
 import org.jetbrains.annotations.Nullable;
 
 import net.minecraft.core.HolderLookup;
 import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.Tag;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.item.ItemStack;
@@ -38,6 +43,7 @@ import appeng.crafting.pattern.AEProcessingPattern;
 import appeng.crafting.pattern.AESmithingTablePattern;
 import appeng.crafting.pattern.AEStonecuttingPattern;
 import appeng.helpers.IPatternTerminalLogicHost;
+import appeng.helpers.externalstorage.GenericStackInv;
 import appeng.util.ConfigInventory;
 import appeng.util.inv.AppEngInternalInventory;
 import appeng.util.inv.InternalInventoryHost;
@@ -45,11 +51,15 @@ import appeng.util.inv.filter.AEItemDefinitionFilter;
 
 public class PatternEncodingLogic implements InternalInventoryHost {
 
-    private final IPatternTerminalLogicHost host;
+    private static final String MODE_DRAFTS_TAG = "modeDrafts";
+    private static final String DRAFT_INPUTS_TAG = "inputs";
+    private static final String DRAFT_OUTPUTS_TAG = "outputs";
 
     private static final int MAX_INPUT_SLOTS = Math.max(AECraftingPattern.CRAFTING_GRID_SLOTS,
             AEProcessingPattern.MAX_INPUT_SLOTS);
     private static final int MAX_OUTPUT_SLOTS = AEProcessingPattern.MAX_OUTPUT_SLOTS;
+
+    private final IPatternTerminalLogicHost host;
 
     private final ConfigInventory encodedInputInv = ConfigInventory.configStacks(MAX_INPUT_SLOTS)
             .changeListener(this::onEncodedInputChanged).allowOverstacking(true).build();
@@ -58,6 +68,8 @@ public class PatternEncodingLogic implements InternalInventoryHost {
 
     private final AppEngInternalInventory blankPatternInv = new AppEngInternalInventory(this, 1);
     private final AppEngInternalInventory encodedPatternInv = new AppEngInternalInventory(this, 1);
+    private final Map<EncodingMode, List<GenericStack>> inputDrafts = new EnumMap<>(EncodingMode.class);
+    private final Map<EncodingMode, List<GenericStack>> outputDrafts = new EnumMap<>(EncodingMode.class);
 
     private EncodingMode mode = EncodingMode.CRAFTING;
     private boolean substitute = false;
@@ -69,6 +81,7 @@ public class PatternEncodingLogic implements InternalInventoryHost {
     public PatternEncodingLogic(IPatternTerminalLogicHost host) {
         this.host = host;
         this.blankPatternInv.setFilter(new AEItemDefinitionFilter(AEItems.BLANK_PATTERN));
+        initializeEmptyDrafts();
     }
 
     @Override
@@ -100,10 +113,16 @@ public class PatternEncodingLogic implements InternalInventoryHost {
 
     private void onEncodedInputChanged() {
         fixCraftingRecipes();
+        if (!isClientSide()) {
+            saveVisibleInputDraft(mode);
+        }
         saveChanges();
     }
 
     private void onEncodedOutputChanged() {
+        if (!isClientSide()) {
+            saveVisibleOutputDraft(mode);
+        }
         saveChanges();
     }
 
@@ -181,8 +200,21 @@ public class PatternEncodingLogic implements InternalInventoryHost {
     }
 
     public void setMode(EncodingMode mode) {
-        this.mode = mode;
+        if (isClientSide()) {
+            this.mode = mode;
+            return;
+        }
+
+        if (this.mode != mode) {
+            saveVisibleDraft(this.mode);
+            this.mode = mode;
+            restoreVisibleDraft(mode);
+        } else {
+            this.mode = mode;
+        }
+
         this.fixCraftingRecipes();
+        saveVisibleDraft(mode);
         this.saveChanges();
     }
 
@@ -268,12 +300,21 @@ public class PatternEncodingLogic implements InternalInventoryHost {
 
             encodedInputInv.readFromChildTag(data, "encodedInputs", registries);
             encodedOutputInv.readFromChildTag(data, "encodedOutputs", registries);
+
+            if (data.contains(MODE_DRAFTS_TAG, Tag.TAG_COMPOUND)) {
+                readModeDrafts(data.getCompound(MODE_DRAFTS_TAG), registries);
+                restoreVisibleDraft(this.mode);
+            } else {
+                saveVisibleDraft(this.mode);
+            }
         } finally {
             isLoading = false;
         }
     }
 
     public void writeToNBT(CompoundTag data, HolderLookup.Provider registries) {
+        saveVisibleDraft(this.mode);
+
         data.putString("mode", this.mode.name());
         data.putBoolean("substitute", this.substitute);
         data.putBoolean("substituteFluids", this.substituteFluids);
@@ -284,6 +325,94 @@ public class PatternEncodingLogic implements InternalInventoryHost {
         encodedPatternInv.writeToNBT(data, "encodedPattern", registries);
         encodedInputInv.writeToChildTag(data, "encodedInputs", registries);
         encodedOutputInv.writeToChildTag(data, "encodedOutputs", registries);
+        writeModeDrafts(data, registries);
+    }
+
+    private void initializeEmptyDrafts() {
+        for (var mode : EncodingMode.values()) {
+            inputDrafts.put(mode, emptyDraft(MAX_INPUT_SLOTS));
+            outputDrafts.put(mode, emptyDraft(MAX_OUTPUT_SLOTS));
+        }
+    }
+
+    private static List<GenericStack> emptyDraft(int size) {
+        var result = new ArrayList<GenericStack>(size);
+        for (int i = 0; i < size; i++) {
+            result.add(null);
+        }
+        return result;
+    }
+
+    private void saveVisibleDraft(EncodingMode mode) {
+        saveVisibleInputDraft(mode);
+        saveVisibleOutputDraft(mode);
+    }
+
+    private void saveVisibleInputDraft(EncodingMode mode) {
+        inputDrafts.put(mode, encodedInputInv.toList());
+    }
+
+    private void saveVisibleOutputDraft(EncodingMode mode) {
+        outputDrafts.put(mode, encodedOutputInv.toList());
+    }
+
+    private void restoreVisibleDraft(EncodingMode mode) {
+        fillInventoryFromSparseStacks(encodedInputInv, inputDrafts.get(mode));
+        fillInventoryFromSparseStacks(encodedOutputInv, outputDrafts.get(mode));
+    }
+
+    private void readModeDrafts(CompoundTag draftsTag, HolderLookup.Provider registries) {
+        initializeEmptyDrafts();
+
+        for (var mode : EncodingMode.values()) {
+            var modeTagName = modeDraftTagName(mode);
+            if (!draftsTag.contains(modeTagName, Tag.TAG_COMPOUND)) {
+                continue;
+            }
+
+            var modeTag = draftsTag.getCompound(modeTagName);
+            inputDrafts.put(mode, readDraft(modeTag.getList(DRAFT_INPUTS_TAG, Tag.TAG_COMPOUND),
+                    MAX_INPUT_SLOTS, registries));
+            outputDrafts.put(mode, readDraft(modeTag.getList(DRAFT_OUTPUTS_TAG, Tag.TAG_COMPOUND),
+                    MAX_OUTPUT_SLOTS, registries));
+        }
+    }
+
+    private void writeModeDrafts(CompoundTag data, HolderLookup.Provider registries) {
+        var draftsTag = new CompoundTag();
+
+        for (var mode : EncodingMode.values()) {
+            var modeTag = new CompoundTag();
+            writeDraft(modeTag, DRAFT_INPUTS_TAG, inputDrafts.get(mode), registries);
+            writeDraft(modeTag, DRAFT_OUTPUTS_TAG, outputDrafts.get(mode), registries);
+
+            if (!modeTag.isEmpty()) {
+                draftsTag.put(modeDraftTagName(mode), modeTag);
+            }
+        }
+
+        if (draftsTag.isEmpty()) {
+            data.remove(MODE_DRAFTS_TAG);
+        } else {
+            data.put(MODE_DRAFTS_TAG, draftsTag);
+        }
+    }
+
+    private static List<GenericStack> readDraft(ListTag tag, int size, HolderLookup.Provider registries) {
+        var inv = new GenericStackInv(null, size);
+        inv.readFromTag(tag, registries);
+        return inv.toList();
+    }
+
+    private static void writeDraft(CompoundTag tag, String name, List<GenericStack> draft,
+            HolderLookup.Provider registries) {
+        var inv = new GenericStackInv(null, draft.size());
+        inv.readFromList(draft);
+        inv.writeToChildTag(tag, name, registries);
+    }
+
+    private static String modeDraftTagName(EncodingMode mode) {
+        return mode.name().toLowerCase(Locale.ROOT);
     }
 
     private void fixCraftingRecipes() {

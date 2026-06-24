@@ -61,6 +61,7 @@ import appeng.api.crafting.PatternDetailsHelper;
 import appeng.api.implementations.blockentities.PatternContainerGroup;
 import appeng.api.storage.ILinkStatus;
 import appeng.client.gui.AEBaseScreen;
+import appeng.client.gui.TerminalGuiScale;
 import appeng.client.gui.style.PaletteColor;
 import appeng.client.gui.style.ScreenStyle;
 import appeng.client.gui.widgets.AETextField;
@@ -166,7 +167,13 @@ public class PatternAccessTermScreen<C extends PatternAccessTermMenu> extends AE
     }
 
     @Override
+    protected TerminalGuiScale getTerminalGuiScale() {
+        return TerminalGuiScale.of(config.getTerminalGuiScale());
+    }
+
+    @Override
     public void init() {
+        applyTerminalGuiScale();
         this.visibleRows = Math.max(2, config.getTerminalStyle().getRows(
                 (this.height - GUI_HEADER_HEIGHT - GUI_FOOTER_HEIGHT - GUI_TOP_AND_BOTTOM_PADDING) / ROW_HEIGHT));
         // Render inventory in correct place.
@@ -309,12 +316,17 @@ public class PatternAccessTermScreen<C extends PatternAccessTermMenu> extends AE
 
     @Override
     public boolean mouseClicked(double xCoord, double yCoord, int btn) {
+        return mouseClickedTerminal(toTerminalMouseX(xCoord), toTerminalMouseY(yCoord), btn);
+    }
+
+    @Override
+    protected boolean mouseClickedTerminal(double xCoord, double yCoord, int btn) {
         if (btn == 1 && this.searchField.isMouseOver(xCoord, yCoord)) {
             this.searchField.setValue("");
             // Don't return immediately to also grab focus.
         }
 
-        return super.mouseClicked(xCoord, yCoord, btn);
+        return super.mouseClickedTerminal(xCoord, yCoord, btn);
     }
 
     @Override

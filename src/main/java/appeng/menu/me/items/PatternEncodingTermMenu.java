@@ -189,7 +189,7 @@ public class PatternEncodingTermMenu extends MEStorageMenu {
         registerClientAction(ACTION_SET_STONECUTTING_RECIPE_ID, ResourceLocation.class,
                 encodingLogic::setStonecuttingRecipeId);
         registerClientAction(ACTION_CLEAR, this::clear);
-        registerClientAction(ACTION_SET_MODE, EncodingMode.class, encodingLogic::setMode);
+        registerClientAction(ACTION_SET_MODE, EncodingMode.class, this::setMode);
         registerClientAction(ACTION_SET_SUBSTITUTION, Boolean.class, encodingLogic::setSubstitution);
         registerClientAction(ACTION_SET_FLUID_SUBSTITUTION, Boolean.class, encodingLogic::setFluidSubstitution);
         registerClientAction(ACTION_CYCLE_PROCESSING_OUTPUT, this::cycleProcessingOutput);
@@ -563,6 +563,7 @@ public class PatternEncodingTermMenu extends MEStorageMenu {
             sendClientAction(ACTION_SET_MODE, mode);
         } else {
             this.mode = mode;
+            this.encodingLogic.setMode(mode);
         }
     }
 

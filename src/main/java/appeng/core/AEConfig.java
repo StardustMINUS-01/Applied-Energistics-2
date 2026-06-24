@@ -37,6 +37,7 @@ import appeng.api.config.PowerUnit;
 import appeng.api.config.Settings;
 import appeng.api.config.TerminalStyle;
 import appeng.api.networking.pathing.ChannelMode;
+import appeng.client.gui.TerminalGuiScale;
 import appeng.core.settings.TickRates;
 import appeng.util.EnumCycler;
 import appeng.util.Platform;
@@ -174,6 +175,18 @@ public final class AEConfig {
     public void setTerminalStyle(TerminalStyle setting) {
         if (setting != client.terminalStyle.get()) {
             client.terminalStyle.set(setting);
+            client.spec.save();
+        }
+    }
+
+    public int getTerminalGuiScale() {
+        return client.terminalGuiScale.get();
+    }
+
+    public void setTerminalGuiScale(int scale) {
+        int clamped = TerminalGuiScale.clamp(scale);
+        if (clamped != client.terminalGuiScale.get()) {
+            client.terminalGuiScale.set(clamped);
             client.spec.save();
         }
     }
@@ -434,6 +447,7 @@ public final class AEConfig {
 
         // Terminal Settings
         public final EnumValue<TerminalStyle> terminalStyle;
+        public final IntValue terminalGuiScale;
         public final BooleanValue pinAutoCraftedItems;
         public final BooleanValue clearGridOnClose;
         public final IntValue terminalMargin;
@@ -479,6 +493,9 @@ public final class AEConfig {
 
             var terminals = builder.push("terminals");
             this.terminalStyle = defineEnum(terminals, "terminalStyle", TerminalStyle.SMALL);
+            this.terminalGuiScale = define(terminals, "terminalGuiScale", TerminalGuiScale.SYNC_WITH_MINECRAFT,
+                    TerminalGuiScale.SYNC_WITH_MINECRAFT, TerminalGuiScale.MAX_FIXED_SCALE,
+                    "Controls the GUI scale used by ME terminal screens. 0 follows Minecraft's GUI scale; 1-5 force that terminal scale.");
             this.pinAutoCraftedItems = define(builder, "pinAutoCraftedItems", true,
                     "Pin items that the player auto-crafts to the top of the terminal");
             this.clearGridOnClose = define(builder, "clearGridOnClose", false,

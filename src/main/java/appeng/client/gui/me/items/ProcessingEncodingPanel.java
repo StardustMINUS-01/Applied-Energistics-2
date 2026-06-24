@@ -40,12 +40,12 @@ public class ProcessingEncodingPanel extends EncodingModePanel {
         widgets.add("processingCycleOutput", this.cycleOutputBtn);
 
         this.scaleButtons = new ProcessingPatternScaleButton[] {
-                createScaleButton("processingScaleX2", 2),
-                createScaleButton("processingScaleX3", 3),
-                createScaleButton("processingScaleX5", 5),
                 createScaleButton("processingScaleDiv2", -2),
                 createScaleButton("processingScaleDiv3", -3),
                 createScaleButton("processingScaleDiv5", -5),
+                createScaleButton("processingScaleX2", 2),
+                createScaleButton("processingScaleX3", 3),
+                createScaleButton("processingScaleX5", 5),
         };
 
         this.scrollbar = widgets.addScrollBar("processingPatternModeScrollbar", Scrollbar.SMALL);

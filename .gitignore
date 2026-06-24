@@ -26,6 +26,7 @@
 !docs/
 !src/
 /docs/crafting-v2-migration/
+/docs/local-notes/
 /src/generated/resources/.cache/
 !/guidebook
 /guidebook/sandbox

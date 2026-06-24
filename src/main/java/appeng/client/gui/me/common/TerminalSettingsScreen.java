@@ -6,6 +6,7 @@ import appeng.client.gui.AESubScreen;
 import appeng.client.gui.Icon;
 import appeng.client.gui.widgets.AECheckbox;
 import appeng.client.gui.widgets.TabButton;
+import appeng.client.gui.widgets.TerminalGuiScaleSlider;
 import appeng.core.localization.GuiText;
 import appeng.integration.abstraction.ItemListMod;
 import appeng.menu.SlotSemantics;
@@ -16,6 +17,7 @@ public class TerminalSettingsScreen<C extends MEStorageMenu> extends AESubScreen
     private final AECheckbox pinAutoCraftedItemsCheckbox;
     private final AECheckbox notifyForFinishedCraftingJobsCheckbox;
     private final AECheckbox clearGridOnCloseCheckbox;
+    private final TerminalGuiScaleSlider terminalGuiScaleSlider;
 
     private final AECheckbox useInternalSearchRadio;
     private final AECheckbox useExternalSearchRadio;
@@ -47,6 +49,8 @@ public class TerminalSettingsScreen<C extends MEStorageMenu> extends AESubScreen
                 GuiText.TerminalSettingsNotifyForFinishedJobs.text(), this::save);
         clearGridOnCloseCheckbox = widgets.addCheckbox("clearGridOnCloseCheckbox",
                 GuiText.TerminalSettingsClearGridOnClose.text(), this::save);
+        terminalGuiScaleSlider = new TerminalGuiScaleSlider(config.getTerminalGuiScale(), this::saveTerminalGuiScale);
+        widgets.add("terminalGuiScaleSlider", terminalGuiScaleSlider);
 
         useInternalSearchRadio = widgets.addCheckbox("useInternalSearchRadio",
                 GuiText.SearchSettingsUseInternalSearch.text(), this::switchToAeSearch);
@@ -99,6 +103,7 @@ public class TerminalSettingsScreen<C extends MEStorageMenu> extends AESubScreen
         pinAutoCraftedItemsCheckbox.setSelected(config.isPinAutoCraftedItems());
         notifyForFinishedCraftingJobsCheckbox.setSelected(config.isNotifyForFinishedCraftingJobs());
         clearGridOnCloseCheckbox.setSelected(config.isClearGridOnClose());
+        terminalGuiScaleSlider.setSelectedScale(config.getTerminalGuiScale());
 
         useInternalSearchRadio.setSelected(!config.isUseExternalSearch());
         useExternalSearchRadio.setSelected(config.isUseExternalSearch());
@@ -124,6 +129,11 @@ public class TerminalSettingsScreen<C extends MEStorageMenu> extends AESubScreen
         config.setNotifyForFinishedCraftingJobs(notifyForFinishedCraftingJobsCheckbox.isSelected());
         config.setClearGridOnClose(clearGridOnCloseCheckbox.isSelected());
 
+        updateState();
+    }
+
+    private void saveTerminalGuiScale(int scale) {
+        config.setTerminalGuiScale(scale);
         updateState();
     }
 }

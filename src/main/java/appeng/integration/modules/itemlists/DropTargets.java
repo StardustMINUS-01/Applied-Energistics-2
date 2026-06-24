@@ -21,7 +21,8 @@ public final class DropTargets {
         List<DropTarget> targets = new ArrayList<>();
         for (var slot : aeScreen.getMenu().slots) {
             if (slot.isActive() && slot instanceof FakeSlot fakeSlot) {
-                var area = new Rect2i(aeScreen.getGuiLeft() + slot.x, aeScreen.getGuiTop() + slot.y, 16, 16);
+                var area = aeScreen.toMinecraftRect(aeScreen.getVirtualGuiLeft() + slot.x,
+                        aeScreen.getVirtualGuiTop() + slot.y, 16, 16);
                 targets.add(new FakeSlotDropTarget(area, fakeSlot));
             }
         }

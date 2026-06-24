@@ -39,10 +39,12 @@ import org.slf4j.LoggerFactory;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.ComponentRenderUtils;
 import net.minecraft.client.gui.components.events.GuiEventListener;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
+import net.minecraft.client.gui.screens.inventory.tooltip.ClientTooltipPositioner;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.client.renderer.Rect2i;
 import net.minecraft.client.renderer.RenderType;
@@ -171,13 +173,47 @@ public abstract class AEBaseScreen<T extends AEBaseMenu> extends AbstractContain
         }
     }
 
+    protected TerminalGuiScale getTerminalGuiScale() {
+        return TerminalGuiScale.sync();
+    }
+
+    protected final void applyTerminalGuiScale() {
+        if (minecraft == null) {
+            return;
+        }
+
+        var window = minecraft.getWindow();
+        int minecraftGuiScale = (Integer) minecraft.options.guiScale().get();
+        int terminalGuiScale = getTerminalGuiScale().getWindowGuiScale(minecraftGuiScale);
+        window.setGuiScale(window.calculateScale(terminalGuiScale, minecraft.isEnforceUnicode()));
+        width = window.getGuiScaledWidth();
+        height = window.getGuiScaledHeight();
+    }
+
+    private void restoreMinecraftGuiScale() {
+        if (minecraft == null) {
+            return;
+        }
+
+        var window = minecraft.getWindow();
+        int minecraftGuiScale = (Integer) minecraft.options.guiScale().get();
+        window.setGuiScale(window.calculateScale(minecraftGuiScale, minecraft.isEnforceUnicode()));
+    }
+
     @Override
     @MustBeInvokedByOverriders
     protected void init() {
+        applyTerminalGuiScale();
         super.init();
         positionSlots();
 
         widgets.populateScreen(this::addRenderableWidget, getBounds(true), this);
+    }
+
+    @Override
+    public void removed() {
+        restoreMinecraftGuiScale();
+        super.removed();
     }
 
     protected boolean shouldAddToolbar() {
@@ -270,7 +306,7 @@ public abstract class AEBaseScreen<T extends AEBaseMenu> extends AbstractContain
 
         if (AEConfig.instance().isShowDebugGuiOverlays()) {
             // Show a green overlay on exclusion zones
-            List<Rect2i> exclusionZones = getExclusionZones();
+            List<Rect2i> exclusionZones = getVirtualExclusionZones();
             for (Rect2i rectangle2d : exclusionZones) {
                 fillRect(guiGraphics, rectangle2d, 0x7f00FF00);
             }
@@ -355,7 +391,14 @@ public abstract class AEBaseScreen<T extends AEBaseMenu> extends AbstractContain
                         && mouseY < area.getY() + area.getHeight()) {
                     var tooltip = new Tooltip(tooltipWidget.getTooltipMessage());
                     if (!tooltip.getContent().isEmpty()) {
-                        drawTooltipWithHeader(guiGraphics, tooltip, mouseX, mouseY);
+                        var positioner = tooltipWidget.getTooltipPositioner();
+                        if (positioner != null) {
+                            drawTooltipWithHeader(guiGraphics, tooltip, mouseX, mouseY, positioner);
+                        } else {
+                            drawTooltipWithHeader(guiGraphics, tooltip,
+                                    tooltipWidget.getTooltipX(mouseX),
+                                    tooltipWidget.getTooltipY(mouseY));
+                        }
                     }
                 }
             }
@@ -372,10 +415,20 @@ public abstract class AEBaseScreen<T extends AEBaseMenu> extends AbstractContain
         drawTooltipWithHeader(guiGraphics, mouseX, mouseY, tooltip.getContent());
     }
 
+    private void drawTooltipWithHeader(GuiGraphics guiGraphics, Tooltip tooltip, int mouseX, int mouseY,
+            ClientTooltipPositioner positioner) {
+        drawTooltipWithHeader(guiGraphics, mouseX, mouseY, tooltip.getContent(), positioner);
+    }
+
     /**
      * Draws a tooltip and word-wraps it to a maximum width.
      */
     public void drawTooltip(GuiGraphics guiGraphics, int x, int y, List<Component> lines) {
+        drawTooltip(guiGraphics, x, y, lines, null);
+    }
+
+    public void drawTooltip(GuiGraphics guiGraphics, int x, int y, List<Component> lines,
+            @Nullable ClientTooltipPositioner positioner) {
         if (lines.isEmpty()) {
             return;
         }
@@ -391,7 +444,11 @@ public abstract class AEBaseScreen<T extends AEBaseMenu> extends AbstractContain
         for (Component line : lines) {
             styledLines.addAll(ComponentRenderUtils.wrapComponents(line, maxWidth, font));
         }
-        guiGraphics.renderTooltip(font, styledLines, x, y);
+        if (positioner != null) {
+            guiGraphics.renderTooltip(font, styledLines, positioner, x, y);
+        } else {
+            guiGraphics.renderTooltip(font, styledLines, x, y);
+        }
 
     }
 
@@ -399,6 +456,11 @@ public abstract class AEBaseScreen<T extends AEBaseMenu> extends AbstractContain
      * Draws a tooltip and word-wraps it to a maximum width.
      */
     public void drawTooltipWithHeader(GuiGraphics guiGraphics, int x, int y, List<Component> lines) {
+        drawTooltipWithHeader(guiGraphics, x, y, lines, null);
+    }
+
+    public void drawTooltipWithHeader(GuiGraphics guiGraphics, int x, int y, List<Component> lines,
+            @Nullable ClientTooltipPositioner positioner) {
         if (lines.isEmpty()) {
             return;
         }
@@ -417,7 +479,7 @@ public abstract class AEBaseScreen<T extends AEBaseMenu> extends AbstractContain
                 }));
             }
         }
-        drawTooltip(guiGraphics, x, y, formattedLines);
+        drawTooltip(guiGraphics, x, y, formattedLines, positioner);
     }
 
     @Override
@@ -534,6 +596,38 @@ public abstract class AEBaseScreen<T extends AEBaseMenu> extends AbstractContain
         return new Point((int) Math.round(x - leftPos), (int) Math.round(y - topPos));
     }
 
+    protected final double toTerminalMouseX(double x) {
+        return x;
+    }
+
+    protected final double toTerminalMouseY(double y) {
+        return y;
+    }
+
+    protected final double toTerminalMouseDelta(double delta) {
+        return delta;
+    }
+
+    public final int toMinecraftX(double x) {
+        return (int) Math.round(x);
+    }
+
+    public final int toMinecraftY(double y) {
+        return (int) Math.round(y);
+    }
+
+    public final int toMinecraftSize(double size) {
+        return Math.max(1, (int) Math.round(size));
+    }
+
+    public final Rect2i toMinecraftRect(double x, double y, double width, double height) {
+        return new Rect2i(
+                toMinecraftX(x),
+                toMinecraftY(y),
+                toMinecraftSize(width),
+                toMinecraftSize(height));
+    }
+
     private boolean focusChangedToSomething = false;
 
     @Override
@@ -546,6 +640,11 @@ public abstract class AEBaseScreen<T extends AEBaseMenu> extends AbstractContain
 
     @Override
     public boolean mouseScrolled(double x, double y, double deltaX, double deltaY) {
+        return mouseScrolledTerminal(toTerminalMouseX(x), toTerminalMouseY(y),
+                toTerminalMouseDelta(deltaX), toTerminalMouseDelta(deltaY));
+    }
+
+    protected boolean mouseScrolledTerminal(double x, double y, double deltaX, double deltaY) {
         if (deltaY != 0 && widgets.onMouseWheel(getMousePoint(x, y), deltaY)) {
             return true;
         }
@@ -554,6 +653,10 @@ public abstract class AEBaseScreen<T extends AEBaseMenu> extends AbstractContain
 
     @Override
     public boolean mouseClicked(double xCoord, double yCoord, int btn) {
+        return mouseClickedTerminal(toTerminalMouseX(xCoord), toTerminalMouseY(yCoord), btn);
+    }
+
+    protected boolean mouseClickedTerminal(double xCoord, double yCoord, int btn) {
         this.drag_click.clear();
 
         // Forward right-clicks as-if they were left-clicks
@@ -589,6 +692,10 @@ public abstract class AEBaseScreen<T extends AEBaseMenu> extends AbstractContain
 
     @Override
     public boolean mouseReleased(double mouseX, double mouseY, int button) {
+        return mouseReleasedTerminal(toTerminalMouseX(mouseX), toTerminalMouseY(mouseY), button);
+    }
+
+    protected boolean mouseReleasedTerminal(double mouseX, double mouseY, int button) {
         if (widgets.onMouseUp(getMousePoint(mouseX, mouseY), button)) {
             return true;
         }
@@ -598,6 +705,11 @@ public abstract class AEBaseScreen<T extends AEBaseMenu> extends AbstractContain
 
     @Override
     public boolean mouseDragged(double mouseX, double mouseY, int mouseButton, double dragX, double dragY) {
+        return mouseDraggedTerminal(toTerminalMouseX(mouseX), toTerminalMouseY(mouseY), mouseButton,
+                toTerminalMouseDelta(dragX), toTerminalMouseDelta(dragY));
+    }
+
+    protected boolean mouseDraggedTerminal(double mouseX, double mouseY, int mouseButton, double dragX, double dragY) {
         final Slot slot = this.findSlot(mouseX, mouseY);
         var itemstack = getMenu().getCarried();
 
@@ -881,6 +993,12 @@ public abstract class AEBaseScreen<T extends AEBaseMenu> extends AbstractContain
      * out of the way.
      */
     public List<Rect2i> getExclusionZones() {
+        return getVirtualExclusionZones().stream()
+                .map(rect -> toMinecraftRect(rect.getX(), rect.getY(), rect.getWidth(), rect.getHeight()))
+                .toList();
+    }
+
+    private List<Rect2i> getVirtualExclusionZones() {
         List<Rect2i> result = new ArrayList<>(2);
         widgets.addExclusionZones(result, getBounds(true));
         return result;
@@ -956,6 +1074,14 @@ public abstract class AEBaseScreen<T extends AEBaseMenu> extends AbstractContain
         return this.topPos;
     }
 
+    public final int getVirtualGuiLeft() {
+        return this.leftPos;
+    }
+
+    public final int getVirtualGuiTop() {
+        return this.topPos;
+    }
+
     public final Minecraft getMinecraft() {
         return minecraft;
     }
@@ -1000,6 +1126,8 @@ public abstract class AEBaseScreen<T extends AEBaseMenu> extends AbstractContain
     }
 
     public final void switchToScreen(AEBaseScreen<?> screen) {
+        var portableThirdPartyWidgets = getPortableThirdPartyWidgets();
+
         savedSlotInfos.clear();
         for (var slot : menu.slots) {
             savedSlotInfos.add(new SavedSlotInfo(slot));
@@ -1010,6 +1138,7 @@ public abstract class AEBaseScreen<T extends AEBaseMenu> extends AbstractContain
 
         minecraft.screen = null;
         minecraft.setScreen(screen);
+        screen.addPortableThirdPartyWidgets(portableThirdPartyWidgets);
 
         if (!screen.savedSlotInfos.isEmpty()) {
             // Restore slot state to that of the new screen
@@ -1018,6 +1147,38 @@ public abstract class AEBaseScreen<T extends AEBaseMenu> extends AbstractContain
             }
             screen.savedSlotInfos.clear();
         }
+    }
+
+    protected final List<AbstractWidget> getPortableThirdPartyWidgets() {
+        List<AbstractWidget> result = new ArrayList<>();
+        for (var renderable : renderables) {
+            if (renderable instanceof AbstractWidget widget && isPortableThirdPartyWidget(widget)) {
+                result.add(widget);
+            }
+        }
+        return result;
+    }
+
+    protected final void addPortableThirdPartyWidgets(List<AbstractWidget> widgets) {
+        for (var widget : widgets) {
+            if (!hasPortableThirdPartyWidget(widget.getClass())) {
+                addRenderableWidget(widget);
+            }
+        }
+    }
+
+    private boolean hasPortableThirdPartyWidget(Class<?> widgetClass) {
+        for (var renderable : renderables) {
+            if (renderable.getClass() == widgetClass) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean isPortableThirdPartyWidget(AbstractWidget widget) {
+        var className = widget.getClass().getName();
+        return className.startsWith("dev.ftb.mods.ftblibrary.sidebar.");
     }
 
     /**

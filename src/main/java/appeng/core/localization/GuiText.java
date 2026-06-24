@@ -244,6 +244,8 @@ public enum GuiText implements LocalizationEnum {
     TankBucketCapacity("Can Store up to %d Buckets"),
     Terminal("Terminal"),
     TerminalSettingsTitle("Terminal Settings"),
+    TerminalSettingsGuiScale("Terminal GUI Scale: %s"),
+    TerminalSettingsGuiScaleSync("Sync with Minecraft"),
     TerminalSettingsPinAutoCraftedItems("Pin auto-crafted items to first row"),
     TerminalSettingsNotifyForFinishedJobs("Notify about finished crafting jobs (requires wireless terminal)"),
     TerminalSettingsClearGridOnClose("Automatically clear terminal grid on close (if applicable)"),

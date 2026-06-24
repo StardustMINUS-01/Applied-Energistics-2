@@ -81,6 +81,7 @@ public class PatternEncodingTermMenu extends MEStorageMenu {
     private static final String ACTION_SET_FLUID_SUBSTITUTION = "setFluidSubstitution";
     private static final String ACTION_SET_STONECUTTING_RECIPE_ID = "setStonecuttingRecipeId";
     private static final String ACTION_CYCLE_PROCESSING_OUTPUT = "cycleProcessingOutput";
+    private static final String ACTION_SCALE_PROCESSING_PATTERN = "scaleProcessingPattern";
 
     public static final MenuType<PatternEncodingTermMenu> TYPE = MenuTypeBuilder
             .create(PatternEncodingTermMenu::new, IPatternTerminalMenuHost.class)
@@ -192,6 +193,7 @@ public class PatternEncodingTermMenu extends MEStorageMenu {
         registerClientAction(ACTION_SET_SUBSTITUTION, Boolean.class, encodingLogic::setSubstitution);
         registerClientAction(ACTION_SET_FLUID_SUBSTITUTION, Boolean.class, encodingLogic::setFluidSubstitution);
         registerClientAction(ACTION_CYCLE_PROCESSING_OUTPUT, this::cycleProcessingOutput);
+        registerClientAction(ACTION_SCALE_PROCESSING_PATTERN, Integer.class, this::scaleProcessingPattern);
 
         updateStonecuttingRecipes();
     }
@@ -531,6 +533,21 @@ public class PatternEncodingTermMenu extends MEStorageMenu {
 
         this.broadcastChanges();
         this.getAndUpdateOutput();
+    }
+
+    public void scaleProcessingPattern(int factor) {
+        if (isClientSide()) {
+            sendClientAction(ACTION_SCALE_PROCESSING_PATTERN, factor);
+            return;
+        }
+
+        if (mode != EncodingMode.PROCESSING) {
+            return;
+        }
+
+        if (ProcessingPatternScaler.scale(encodedInputsInv, encodedOutputsInv, factor)) {
+            this.broadcastChanges();
+        }
     }
 
     public EncodingMode getMode() {

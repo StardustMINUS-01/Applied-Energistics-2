@@ -302,7 +302,7 @@ public class PatternProviderLogic implements InternalInventoryHost, ICraftingPro
 
     @Override
     public boolean pushPattern(IPatternDetails patternDetails, KeyCounter[] inputHolder) {
-        if (!sendList.isEmpty() || !this.mainNode.isActive() || !this.patterns.contains(patternDetails)) {
+        if (!canAcceptPattern(patternDetails)) {
             return false;
         }
 
@@ -313,8 +313,6 @@ public class PatternProviderLogic implements InternalInventoryHost, ICraftingPro
             return false;
         }
 
-        record PushTarget(Direction direction, PatternProviderTarget target) {
-        }
         var possibleTargets = new ArrayList<PushTarget>();
 
         // Push to crafting machines first
@@ -344,10 +342,25 @@ public class PatternProviderLogic implements InternalInventoryHost, ICraftingPro
             return false;
         }
 
-        // Rearrange for round-robin
+        return pushPatternToExternalTargets(patternDetails, inputHolder, possibleTargets);
+    }
+
+    public void resetCraftingLock() {
+        if (unlockEvent != null) {
+            unlockEvent = null;
+            unlockStack = null;
+            saveChanges();
+        }
+    }
+
+    private boolean canAcceptPattern(IPatternDetails patternDetails) {
+        return sendList.isEmpty() && this.mainNode.isActive() && this.patterns.contains(patternDetails);
+    }
+
+    private boolean pushPatternToExternalTargets(IPatternDetails patternDetails, KeyCounter[] inputHolder,
+            List<PushTarget> possibleTargets) {
         rearrangeRoundRobin(possibleTargets);
 
-        // Push to other kinds of blocks
         for (int i = 0; i < possibleTargets.size(); ++i) {
             var target = possibleTargets.get(i);
             var direction = target.direction();
@@ -375,12 +388,7 @@ public class PatternProviderLogic implements InternalInventoryHost, ICraftingPro
         return false;
     }
 
-    public void resetCraftingLock() {
-        if (unlockEvent != null) {
-            unlockEvent = null;
-            unlockStack = null;
-            saveChanges();
-        }
+    private record PushTarget(Direction direction, PatternProviderTarget target) {
     }
 
     private void onPushPatternSuccess(IPatternDetails pattern) {

@@ -17,6 +17,7 @@
  */
 package appeng.crafting.execution;
 
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.UUID;
@@ -33,10 +34,13 @@ import net.minecraft.world.level.Level;
 
 import appeng.api.config.Actionable;
 import appeng.api.config.PowerMultiplier;
+import appeng.api.crafting.IPatternDetails;
 import appeng.api.features.IPlayerRegistry;
 import appeng.api.networking.IGrid;
+import appeng.api.networking.crafting.IBulkCraftingProvider;
 import appeng.api.networking.crafting.ICraftingLink;
 import appeng.api.networking.crafting.ICraftingPlan;
+import appeng.api.networking.crafting.ICraftingProvider;
 import appeng.api.networking.crafting.ICraftingRequester;
 import appeng.api.networking.crafting.ICraftingSubmitResult;
 import appeng.api.networking.energy.IEnergyService;
@@ -49,6 +53,8 @@ import appeng.core.network.ClientboundPacket;
 import appeng.core.network.clientbound.CraftingJobStatusPacket;
 import appeng.crafting.CraftingLink;
 import appeng.crafting.inv.ListCraftingInventory;
+import appeng.crafting.ledger.LedgerCraftingPlan;
+import appeng.crafting.pattern.AEProcessingPattern;
 import appeng.hooks.ticking.TickHandler;
 import appeng.me.cluster.implementations.CraftingCPUCluster;
 import appeng.me.service.CraftingService;
@@ -57,11 +63,15 @@ import appeng.me.service.CraftingService;
  * Stores the crafting logic of a crafting CPU.
  */
 public class CraftingCpuLogic {
+    private static final Set<String> GREGTECH_MODERN_PATTERN_BUFFER_TYPES = Set.of(
+            "com.gregtechceu.gtceu.integration.ae2.machine.MEPatternBufferPartMachine");
+
     final CraftingCPUCluster cluster;
     /**
      * Current job.
      */
     private ExecutingCraftingJob job = null;
+    private ExecutingLedgerCraftingJob ledgerJob = null;
     /**
      * Inventory.
      */
@@ -77,6 +87,7 @@ public class CraftingCpuLogic {
     private boolean cantStoreItems = false;
 
     private long lastModifiedOnTick = TickHandler.instance().getCurrentTick();
+    private long cpuInventoryChangeSerial = 0;
 
     public CraftingCpuLogic(CraftingCPUCluster cluster) {
         this.cluster = cluster;
@@ -85,7 +96,7 @@ public class CraftingCpuLogic {
     public ICraftingSubmitResult trySubmitJob(IGrid grid, ICraftingPlan plan, IActionSource src,
             @Nullable ICraftingRequester requester) {
         // Already have a job.
-        if (this.job != null)
+        if (hasJob())
             return CraftingSubmitResult.CPU_BUSY;
         // Check that the node is active.
         if (!cluster.isActive())
@@ -108,13 +119,21 @@ public class CraftingCpuLogic {
                 .orElse(null);
         var craftId = UUID.randomUUID();
         var linkCpu = new CraftingLink(CraftingCpuHelper.generateLinkData(craftId, requester == null, false), cluster);
-        this.job = new ExecutingCraftingJob(plan, this::postChange, linkCpu, playerId);
+        if (plan instanceof LedgerCraftingPlan ledgerPlan) {
+            this.ledgerJob = new ExecutingLedgerCraftingJob(ledgerPlan, this::postChange, linkCpu, playerId);
+        } else {
+            this.job = new ExecutingCraftingJob(plan, this::postChange, linkCpu, playerId);
+        }
         cluster.updateOutput(plan.finalOutput());
         cluster.markDirty();
 
         // TODO: post monitor difference?
 
-        notifyJobOwner(job, CraftingJobStatusPacket.Status.STARTED);
+        if (job != null) {
+            notifyJobOwner(job, CraftingJobStatusPacket.Status.STARTED);
+        } else {
+            notifyJobOwner(ledgerJob, CraftingJobStatusPacket.Status.STARTED);
+        }
 
         // Non-standalone jobs need another link for the requester, and both links need to be submitted to the cache.
         if (requester != null) {
@@ -136,21 +155,25 @@ public class CraftingCpuLogic {
             return;
         cantStoreItems = false;
         // If we don't have a job, just try to dump our items.
-        if (this.job == null) {
+        if (this.job == null && this.ledgerJob == null) {
             this.storeItems();
             if (!this.inventory.list.isEmpty()) {
                 cantStoreItems = true;
             }
             return;
         }
-        // Check if the job was cancelled.
-        if (job.link.isCanceled()) {
+        if (this.ledgerJob != null) {
+            if (ledgerJob.link.isCanceled()) {
+                cancel();
+                return;
+            }
+            if (ledgerJob.suspended) {
+                return;
+            }
+        } else if (job.link.isCanceled()) {
             cancel();
             return;
-        }
-
-        // Don't schedule more work while suspended
-        if (job.suspended) {
+        } else if (job.suspended) {
             return;
         }
 
@@ -181,8 +204,9 @@ public class CraftingCpuLogic {
     public int executeCrafting(int maxPatterns, CraftingService craftingService, IEnergyService energyService,
             Level level) {
         var job = this.job;
-        if (job == null)
-            return 0;
+        if (job == null) {
+            return executeLedgerCrafting(maxPatterns, craftingService, energyService, level);
+        }
 
         var pushedPatterns = 0;
 
@@ -259,6 +283,247 @@ public class CraftingCpuLogic {
         return pushedPatterns;
     }
 
+    private int executeLedgerCrafting(int maxPatterns, CraftingService craftingService, IEnergyService energyService,
+            Level level) {
+        var job = this.ledgerJob;
+        if (job == null) {
+            return 0;
+        }
+        if (job.allInputsBlockedAtSerial == cpuInventoryChangeSerial) {
+            job.inputBlockedShortCircuits++;
+            return 0;
+        }
+
+        var pushedPatterns = 0;
+        var scannedWithoutProgress = 0;
+        var onlyInputWaitsPreventedProgress = true;
+        taskLoop: while (!job.tasks.isEmpty() && pushedPatterns < maxPatterns
+                && scannedWithoutProgress < job.tasks.size()) {
+            if (job.nextTaskIndex >= job.tasks.size()) {
+                job.nextTaskIndex = 0;
+            }
+
+            var task = job.tasks.get(job.nextTaskIndex);
+            if (task.remainingTimes() <= 0) {
+                job.tasks.remove(job.nextTaskIndex);
+                continue;
+            }
+
+            var details = task.pattern();
+            if (task.isInputBlocked(cpuInventoryChangeSerial)) {
+                job.inputBlockedSkips++;
+                job.nextTaskIndex++;
+                scannedWithoutProgress++;
+                continue;
+            }
+
+            var providers = new ArrayList<ICraftingProvider>();
+            var hasAvailableProvider = false;
+            job.providerLookups++;
+            for (var provider : craftingService.getProviders(details)) {
+                providers.add(provider);
+                job.providerBusyChecks++;
+                if (!provider.isBusy()) {
+                    hasAvailableProvider = true;
+                }
+            }
+            if (!hasAvailableProvider) {
+                job.busyProviderSkips += providers.size();
+                onlyInputWaitsPreventedProgress = false;
+                job.nextTaskIndex++;
+                scannedWithoutProgress++;
+                continue;
+            }
+
+            if (tryPushLedgerTaskBatch(task, providers, energyService, level)) {
+                var pushedTimes = task.remainingTimes();
+                pushedPatterns++;
+                job.patternPushes += pushedTimes;
+                task.decrement(pushedTimes);
+                job.tasks.remove(job.nextTaskIndex);
+                job.completedTasks++;
+                scannedWithoutProgress = 0;
+                if (pushedPatterns == maxPatterns) {
+                    break taskLoop;
+                }
+                continue;
+            }
+
+            var expectedOutputs = new KeyCounter();
+            var expectedContainerItems = new KeyCounter();
+            @Nullable
+            var craftingContainer = CraftingCpuHelper.extractPatternInputs(
+                    details, inventory, level, expectedOutputs, expectedContainerItems);
+            if (craftingContainer == null) {
+                job.inputUnavailableSkips++;
+                task.markInputUnavailable(cpuInventoryChangeSerial);
+            } else {
+                job.inputExtractions++;
+                task.clearInputUnavailable();
+            }
+            var pushedBeforeTask = pushedPatterns;
+
+            for (var provider : providers) {
+                while (craftingContainer != null && task.remainingTimes() > 0 && pushedPatterns < maxPatterns) {
+                    if (provider.isBusy()) {
+                        break;
+                    }
+
+                    var patternPower = CraftingCpuHelper.calculatePatternPower(craftingContainer);
+                    if (energyService.extractAEPower(patternPower, Actionable.SIMULATE,
+                            PowerMultiplier.CONFIG) < patternPower - 0.01) {
+                        break;
+                    }
+
+                    if (!provider.pushPattern(details, craftingContainer)) {
+                        break;
+                    }
+
+                    craftingContainer = null;
+                    energyService.extractAEPower(patternPower, Actionable.MODULATE, PowerMultiplier.CONFIG);
+                    pushedPatterns++;
+                    job.patternPushes++;
+
+                    addLedgerExpectedOutputs(expectedOutputs, expectedContainerItems);
+
+                    task.decrement();
+                    if (task.remainingTimes() <= 0) {
+                        job.tasks.remove(job.nextTaskIndex);
+                        job.completedTasks++;
+                    }
+                    scannedWithoutProgress = 0;
+
+                    if (pushedPatterns == maxPatterns) {
+                        break taskLoop;
+                    }
+
+                    if (task.remainingTimes() <= 0) {
+                        continue taskLoop;
+                    }
+
+                    expectedOutputs.reset();
+                    expectedContainerItems.reset();
+                    craftingContainer = CraftingCpuHelper.extractPatternInputs(details, inventory,
+                            level, expectedOutputs, expectedContainerItems);
+                    if (craftingContainer == null) {
+                        job.inputUnavailableSkips++;
+                        task.markInputUnavailable(cpuInventoryChangeSerial);
+                    } else {
+                        job.inputExtractions++;
+                        task.clearInputUnavailable();
+                    }
+                }
+            }
+
+            if (craftingContainer != null) {
+                CraftingCpuHelper.reinjectPatternInputs(inventory, craftingContainer);
+            }
+
+            if (pushedPatterns == pushedBeforeTask) {
+                if (craftingContainer != null) {
+                    onlyInputWaitsPreventedProgress = false;
+                }
+                job.nextTaskIndex++;
+                scannedWithoutProgress++;
+            } else if (!job.tasks.isEmpty() && job.nextTaskIndex < job.tasks.size()
+                    && job.tasks.get(job.nextTaskIndex) == task) {
+                job.nextTaskIndex++;
+            }
+        }
+
+        if (pushedPatterns == 0 && !job.tasks.isEmpty() && scannedWithoutProgress >= job.tasks.size()
+                && onlyInputWaitsPreventedProgress) {
+            job.allInputsBlockedAtSerial = cpuInventoryChangeSerial;
+        }
+
+        return pushedPatterns;
+    }
+
+    private boolean tryPushLedgerTaskBatch(ExecutingLedgerCraftingJob.TaskProgress task,
+            ArrayList<ICraftingProvider> providers, IEnergyService energyService, Level level) {
+        var job = this.ledgerJob;
+        if (job == null || task.remainingTimes() <= 1 || !task.pattern().supportsPushInputsToExternalInventory()) {
+            return false;
+        }
+
+        var details = task.pattern();
+        var times = task.remainingTimes();
+        for (var provider : providers) {
+            if (provider.isBusy() || !canBatchPushToProvider(details, provider)) {
+                continue;
+            }
+
+            var expectedOutputs = new KeyCounter();
+            var expectedContainerItems = new KeyCounter();
+            var craftingContainer = CraftingCpuHelper.extractPatternInputs(
+                    details, inventory, level, times, expectedOutputs, expectedContainerItems);
+            if (craftingContainer == null) {
+                return false;
+            }
+
+            var patternPower = CraftingCpuHelper.calculatePatternPower(craftingContainer);
+            if (energyService.extractAEPower(patternPower, Actionable.SIMULATE,
+                    PowerMultiplier.CONFIG) < patternPower - 0.01) {
+                CraftingCpuHelper.reinjectPatternInputs(inventory, craftingContainer);
+                return false;
+            }
+
+            if (pushPatternBatch(details, provider, craftingContainer)) {
+                energyService.extractAEPower(patternPower, Actionable.MODULATE, PowerMultiplier.CONFIG);
+                addLedgerExpectedOutputs(expectedOutputs, expectedContainerItems);
+                task.clearInputUnavailable();
+                return true;
+            }
+
+            CraftingCpuHelper.reinjectPatternInputs(inventory, craftingContainer);
+        }
+
+        return false;
+    }
+
+    private static boolean canBatchPushToProvider(IPatternDetails details, ICraftingProvider provider) {
+        if (provider instanceof IBulkCraftingProvider) {
+            return true;
+        }
+        return details instanceof AEProcessingPattern && isGregTechModernPatternBufferProvider(provider.getClass());
+    }
+
+    private static boolean pushPatternBatch(IPatternDetails details, ICraftingProvider provider,
+            KeyCounter[] craftingContainer) {
+        if (provider instanceof IBulkCraftingProvider bulkProvider) {
+            return bulkProvider.pushPatternBatchToExternalInventory(details, craftingContainer);
+        }
+        return provider.pushPattern(details, craftingContainer);
+    }
+
+    private static boolean isGregTechModernPatternBufferProvider(@Nullable Class<?> type) {
+        if (type == null) {
+            return false;
+        }
+        if (GREGTECH_MODERN_PATTERN_BUFFER_TYPES.contains(type.getName())) {
+            return true;
+        }
+        return isGregTechModernPatternBufferProvider(type.getSuperclass());
+    }
+
+    private void addLedgerExpectedOutputs(KeyCounter expectedOutputs, KeyCounter expectedContainerItems) {
+        var job = this.ledgerJob;
+        if (job == null) {
+            return;
+        }
+
+        for (var expectedOutput : expectedOutputs) {
+            job.waitingFor.insert(expectedOutput.getKey(), expectedOutput.getLongValue(), Actionable.MODULATE);
+        }
+        for (var expectedContainerItem : expectedContainerItems) {
+            job.waitingFor.insert(expectedContainerItem.getKey(), expectedContainerItem.getLongValue(),
+                    Actionable.MODULATE);
+            job.timeTracker.addMaxItems(expectedContainerItem.getLongValue(), expectedContainerItem.getKey().getType());
+        }
+
+        cluster.markDirty();
+    }
+
     /**
      * Called by the CraftingService with an Integer.MAX_VALUE priority to inject items that are being waited for.
      *
@@ -267,8 +532,16 @@ public class CraftingCpuLogic {
     public long insert(AEKey what, long amount, Actionable type) {
         // also stop accepting items when the job is complete, i.e. to prevent re-insertion when pushing out
         // items during storeItems
-        if (what == null || job == null)
+        if (what == null)
             return 0;
+
+        if (ledgerJob != null) {
+            return insertIntoLedgerJob(what, amount, type);
+        }
+
+        if (job == null) {
+            return 0;
+        }
 
         // Only accept items we are waiting for.
         var waitingFor = job.waitingFor.extract(what, amount, Actionable.SIMULATE);
@@ -323,6 +596,50 @@ public class CraftingCpuLogic {
         return inserted;
     }
 
+    private long insertIntoLedgerJob(AEKey what, long amount, Actionable type) {
+        var job = this.ledgerJob;
+        if (job == null) {
+            return 0;
+        }
+
+        var waitingFor = job.waitingFor.extract(what, amount, Actionable.SIMULATE);
+        if (waitingFor <= 0) {
+            return 0;
+        }
+
+        if (amount > waitingFor) {
+            amount = waitingFor;
+        }
+
+        if (type == Actionable.MODULATE) {
+            job.timeTracker.decrementItems(amount, what.getType());
+            job.waitingFor.extract(what, amount, Actionable.MODULATE);
+            cluster.markDirty();
+        }
+
+        long inserted = amount;
+        if (what.matches(job.finalOutput)) {
+            inserted = job.link.insert(what, amount, type);
+
+            if (type == Actionable.MODULATE) {
+                postChange(what);
+                job.remainingAmount = Math.max(0, job.remainingAmount - amount);
+
+                if (job.remainingAmount <= 0) {
+                    finishLedgerJob(true);
+                    cluster.updateOutput(null);
+                } else {
+                    cluster.updateOutput(new GenericStack(job.finalOutput.what(), job.remainingAmount));
+                }
+            }
+        } else if (type == Actionable.MODULATE) {
+            inventory.insert(what, amount, Actionable.MODULATE);
+            cpuInventoryChangeSerial++;
+        }
+
+        return inserted;
+    }
+
     /**
      * Finish the current job.
      *
@@ -356,25 +673,51 @@ public class CraftingCpuLogic {
         this.storeItems();
     }
 
+    private void finishLedgerJob(boolean success) {
+        if (success) {
+            ledgerJob.link.markDone();
+        } else {
+            ledgerJob.link.cancel();
+        }
+
+        ledgerJob.waitingFor.clear();
+        for (var task : ledgerJob.tasks) {
+            for (var output : task.pattern().getOutputs()) {
+                postChange(output.what());
+            }
+        }
+
+        notifyJobOwner(ledgerJob,
+                success ? CraftingJobStatusPacket.Status.FINISHED : CraftingJobStatusPacket.Status.CANCELLED);
+
+        this.ledgerJob = null;
+        this.storeItems();
+    }
+
     /**
      * Cancel the current job.
      */
     public void cancel() {
         // No job to cancel :P
-        if (job == null)
+        if (job == null && ledgerJob == null)
             return;
 
         // Clear displayed stack.
         cluster.updateOutput(null);
 
-        finishJob(false);
+        if (ledgerJob != null) {
+            finishLedgerJob(false);
+        } else {
+            finishJob(false);
+        }
     }
 
     /**
      * Tries to dump all locally stored items back into the storage network.
      */
     public void storeItems() {
-        Preconditions.checkState(job == null, "CPU should not have a job to prevent re-insertion when dumping items");
+        Preconditions.checkState(job == null && ledgerJob == null,
+                "CPU should not have a job to prevent re-insertion when dumping items");
         // Short-circuit if there is nothing to do.
         if (this.inventory.list.isEmpty())
             return;
@@ -410,17 +753,30 @@ public class CraftingCpuLogic {
     }
 
     public boolean hasJob() {
-        return this.job != null;
+        return this.job != null || this.ledgerJob != null;
+    }
+
+    boolean isLedgerJobActive() {
+        return this.ledgerJob != null;
+    }
+
+    LedgerExecutionStats getLedgerExecutionStats() {
+        return this.ledgerJob != null ? this.ledgerJob.executionStats() : LedgerExecutionStats.EMPTY;
     }
 
     @Nullable
     public GenericStack getFinalJobOutput() {
-        return this.job != null ? this.job.finalOutput : null;
+        if (this.job != null) {
+            return this.job.finalOutput;
+        }
+        return this.ledgerJob != null ? this.ledgerJob.finalOutput : null;
     }
 
     public ElapsedTimeTracker getElapsedTimeTracker() {
         if (this.job != null) {
             return this.job.timeTracker;
+        } else if (this.ledgerJob != null) {
+            return this.ledgerJob.timeTracker;
         } else {
             return new ElapsedTimeTracker();
         }
@@ -435,6 +791,14 @@ public class CraftingCpuLogic {
             } else {
                 cluster.updateOutput(new GenericStack(job.finalOutput.what(), job.remainingAmount));
             }
+        } else if (data.contains("ledgerJob")) {
+            this.ledgerJob = new ExecutingLedgerCraftingJob(data.getCompound("ledgerJob"), registries,
+                    this::postChange, this);
+            if (this.ledgerJob.finalOutput == null) {
+                finishLedgerJob(false);
+            } else {
+                cluster.updateOutput(new GenericStack(ledgerJob.finalOutput.what(), ledgerJob.remainingAmount));
+            }
         } else {
             cluster.updateOutput(null);
         }
@@ -444,12 +808,17 @@ public class CraftingCpuLogic {
         data.put("inventory", this.inventory.writeToNBT(registries));
         if (this.job != null) {
             data.put("job", this.job.writeToNBT(registries));
+        } else if (this.ledgerJob != null) {
+            data.put("ledgerJob", this.ledgerJob.writeToNBT(registries));
         }
     }
 
     public ICraftingLink getLastLink() {
         if (this.job != null) {
             return this.job.link;
+        }
+        if (this.ledgerJob != null) {
+            return this.ledgerJob.link;
         }
         return null;
     }
@@ -477,6 +846,8 @@ public class CraftingCpuLogic {
     public long getWaitingFor(AEKey template) {
         if (this.job != null) {
             return this.job.waitingFor.extract(template, Long.MAX_VALUE, Actionable.SIMULATE);
+        } else if (this.ledgerJob != null) {
+            return this.ledgerJob.waitingFor.extract(template, Long.MAX_VALUE, Actionable.SIMULATE);
         }
         return 0;
     }
@@ -484,6 +855,10 @@ public class CraftingCpuLogic {
     public void getAllWaitingFor(Set<AEKey> waitingFor) {
         if (this.job != null) {
             for (var entry : this.job.waitingFor.list) {
+                waitingFor.add(entry.getKey());
+            }
+        } else if (this.ledgerJob != null) {
+            for (var entry : this.ledgerJob.waitingFor.list) {
                 waitingFor.add(entry.getKey());
             }
         }
@@ -496,6 +871,14 @@ public class CraftingCpuLogic {
                 for (var output : t.getKey().getOutputs()) {
                     if (template.matches(output)) {
                         count += output.amount() * t.getValue().value;
+                    }
+                }
+            }
+        } else if (this.ledgerJob != null) {
+            for (var task : ledgerJob.tasks) {
+                for (var output : task.pattern().getOutputs()) {
+                    if (template.matches(output)) {
+                        count += output.amount() * task.remainingTimes();
                     }
                 }
             }
@@ -515,6 +898,13 @@ public class CraftingCpuLogic {
                     out.add(output.what(), output.amount() * t.getValue().value);
                 }
             }
+        } else if (this.ledgerJob != null) {
+            out.addAll(ledgerJob.waitingFor.list);
+            for (var task : ledgerJob.tasks) {
+                for (var output : task.pattern().getOutputs()) {
+                    out.add(output.what(), output.amount() * task.remainingTimes());
+                }
+            }
         }
     }
 
@@ -523,16 +913,40 @@ public class CraftingCpuLogic {
     }
 
     public boolean isJobSuspended() {
-        return job != null && job.suspended;
+        return job != null && job.suspended || ledgerJob != null && ledgerJob.suspended;
     }
 
     public void setJobSuspended(boolean suspended) {
         if (job != null && job.suspended != suspended) {
             job.suspended = suspended;
+        } else if (ledgerJob != null && ledgerJob.suspended != suspended) {
+            ledgerJob.suspended = suspended;
         }
     }
 
     private void notifyJobOwner(ExecutingCraftingJob job, CraftingJobStatusPacket.Status status) {
+        this.lastModifiedOnTick = TickHandler.instance().getCurrentTick();
+
+        var playerId = job.playerId;
+        if (playerId == null) {
+            return;
+        }
+
+        var server = cluster.getLevel().getServer();
+        var connectedPlayer = IPlayerRegistry.getConnected(server, playerId);
+        if (connectedPlayer != null) {
+            var jobId = job.link.getCraftingID();
+            ClientboundPacket message = new CraftingJobStatusPacket(
+                    jobId,
+                    job.finalOutput.what(),
+                    job.finalOutput.amount(),
+                    job.remainingAmount,
+                    status);
+            connectedPlayer.connection.send(message);
+        }
+    }
+
+    private void notifyJobOwner(ExecutingLedgerCraftingJob job, CraftingJobStatusPacket.Status status) {
         this.lastModifiedOnTick = TickHandler.instance().getCurrentTick();
 
         var playerId = job.playerId;

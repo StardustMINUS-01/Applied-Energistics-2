@@ -644,6 +644,8 @@
   "gui.tooltips.ae2.Read": "仅取出",
   "gui.tooltips.ae2.ReadWrite": "双向",
   "gui.tooltips.ae2.RedstoneMode": "红石模式",
+  "gui.tooltips.ae2.ScaleProcessingPattern": "缩放处理样板",
+  "gui.tooltips.ae2.ScaleProcessingPatternHint": "将处理样板输入和输出数量缩放 %s。",
   "gui.tooltips.ae2.ReportInaccessibleFluids": "报告不可交互的流体",
   "gui.tooltips.ae2.ReportInaccessibleFluidsNo": "否：只显示可以取出的流体",
   "gui.tooltips.ae2.ReportInaccessibleFluidsYes": "是：显示无法取出的流体",

@@ -88,6 +88,42 @@
     "processingClearPattern": {
       "left": 79,
       "bottom": 159
+    },
+    "processingScaleX2": {
+      "left": 130,
+      "bottom": 159,
+      "width": 16,
+      "height": 10
+    },
+    "processingScaleX3": {
+      "left": 130,
+      "bottom": 148,
+      "width": 16,
+      "height": 10
+    },
+    "processingScaleX5": {
+      "left": 130,
+      "bottom": 137,
+      "width": 16,
+      "height": 10
+    },
+    "processingScaleDiv2": {
+      "left": 130,
+      "bottom": 126,
+      "width": 16,
+      "height": 10
+    },
+    "processingScaleDiv3": {
+      "left": 130,
+      "bottom": 115,
+      "width": 16,
+      "height": 10
+    },
+    "processingScaleDiv5": {
+      "left": 130,
+      "bottom": 104,
+      "width": 16,
+      "height": 10
     }
   }
 }

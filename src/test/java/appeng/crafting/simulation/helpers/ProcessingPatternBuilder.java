@@ -2,6 +2,7 @@ package appeng.crafting.simulation.helpers;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicLong;
 
 import org.jetbrains.annotations.Nullable;
 
@@ -24,6 +25,39 @@ public class ProcessingPatternBuilder {
 
     public ProcessingPatternBuilder addPreciseInput(long multiplier, GenericStack... possibleInputs) {
         return addPreciseInput(multiplier, false, possibleInputs);
+    }
+
+    public ProcessingPatternBuilder addCountingPreciseInput(long multiplier, AtomicLong possibleInputQueries,
+            GenericStack... possibleInputs) {
+        inputs.add(new IPatternDetails.IInput() {
+            @Override
+            public GenericStack[] getPossibleInputs() {
+                possibleInputQueries.incrementAndGet();
+                return possibleInputs;
+            }
+
+            @Override
+            public long getMultiplier() {
+                return multiplier;
+            }
+
+            @Override
+            public boolean isValid(AEKey input, Level level) {
+                for (var possibleInput : possibleInputs) {
+                    if (possibleInput.what().equals(input)) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+
+            @Nullable
+            @Override
+            public AEKey getRemainingKey(AEKey template) {
+                return null;
+            }
+        });
+        return this;
     }
 
     public ProcessingPatternBuilder addPreciseInput(long multiplier, boolean containerItems,

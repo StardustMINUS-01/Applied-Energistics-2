@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicLong;
 
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -23,6 +24,7 @@ import appeng.api.stacks.GenericStack;
 import appeng.api.stacks.KeyCounter;
 import appeng.core.AELog;
 import appeng.crafting.inv.CraftingSimulationState;
+import appeng.crafting.ledger.LedgerCraftingPlan;
 import appeng.crafting.simulation.helpers.ProcessingPatternBuilder;
 import appeng.crafting.simulation.helpers.SimulationEnv;
 import appeng.util.BootstrapMinecraft;
@@ -33,6 +35,62 @@ public class CraftingSimulationTest {
     static void enableLog() {
         AELog.setCraftingLogEnabled(true);
         AELog.setDebugLogEnabled(true);
+    }
+
+    @Test
+    public void testDefaultPlannerUsesLedgerPlan() {
+        var previousLegacyValue = System.getProperty("appeng.crafting.legacyPlanner");
+        System.clearProperty("appeng.crafting.legacyPlanner");
+        try {
+            var env = new SimulationEnv();
+            var input = item(Items.COBBLESTONE);
+            var output = item(Items.STONE);
+            var pattern = env.addPattern(new ProcessingPatternBuilder(output).addPreciseInput(1, input).build());
+            env.addStoredItem(input);
+
+            var plan = env.runSimulation(output, CalculationStrategy.REPORT_MISSING_ITEMS);
+
+            assertThat(plan).isInstanceOf(LedgerCraftingPlan.class);
+            assertThatPlan(plan)
+                    .succeeded()
+                    .patternsMatch(pattern, 1)
+                    .usedMatch(input)
+                    .missingMatch();
+        } finally {
+            if (previousLegacyValue == null) {
+                System.clearProperty("appeng.crafting.legacyPlanner");
+            } else {
+                System.setProperty("appeng.crafting.legacyPlanner", previousLegacyValue);
+            }
+        }
+    }
+
+    @Test
+    public void testLegacyPlannerPropertyIsIgnored() {
+        var previousLegacyValue = System.getProperty("appeng.crafting.legacyPlanner");
+        System.setProperty("appeng.crafting.legacyPlanner", "true");
+        try {
+            var env = new SimulationEnv();
+            var input = item(Items.COBBLESTONE);
+            var output = item(Items.STONE);
+            var pattern = env.addPattern(new ProcessingPatternBuilder(output).addPreciseInput(1, input).build());
+            env.addStoredItem(input);
+
+            var plan = env.runSimulation(output, CalculationStrategy.REPORT_MISSING_ITEMS);
+
+            assertThat(plan).isInstanceOf(LedgerCraftingPlan.class);
+            assertThatPlan(plan)
+                    .succeeded()
+                    .patternsMatch(pattern, 1)
+                    .usedMatch(input)
+                    .missingMatch();
+        } finally {
+            if (previousLegacyValue == null) {
+                System.clearProperty("appeng.crafting.legacyPlanner");
+            } else {
+                System.setProperty("appeng.crafting.legacyPlanner", previousLegacyValue);
+            }
+        }
     }
 
     @Test
@@ -145,7 +203,7 @@ public class CraftingSimulationTest {
                 .patternsMatch(tablePattern, 2, acaciaPattern, 1)
                 .emittedMatch()
                 .missingMatch(acaciaLog)
-                .usedMatch(mult(acaciaPlanks, 2), birchPlanks, mult(oakPlanks, 2));
+                .usedMatch(acaciaPlanks, birchPlanks, mult(oakPlanks, 2));
     }
 
     @Test
@@ -243,7 +301,7 @@ public class CraftingSimulationTest {
                 .patternsMatch(cobblePattern, 100, pickaxePattern, 1)
                 .emittedMatch()
                 .usedMatch(mult(stone, 100), mult(diamond, 3), mult(stick, 2))
-                .bytesMatch(branching ? 6 : 5, 300 + 3 + 2, 100);
+                .bytesMatch(5, 300 + 3 + 2, 100);
         // note that the pickaxe is only crafted once, and then reused!
     }
 
@@ -305,6 +363,81 @@ public class CraftingSimulationTest {
                 .emittedMatch()
                 .missingMatch()
                 .usedMatch(mult(input1, 5), mult(input2, 3));
+    }
+
+    @Test
+    public void testLargeSinglePathOrder() {
+        var env = new SimulationEnv();
+
+        var input = item(Items.COBBLESTONE);
+        var output = item(Items.STONE);
+
+        var pattern = env.addPattern(new ProcessingPatternBuilder(output).addPreciseInput(1, input).build());
+
+        env.addStoredItem(mult(input, 4096));
+
+        var plan = env.runSimulation(mult(output, 4096), CalculationStrategy.REPORT_MISSING_ITEMS);
+        assertThatPlan(plan)
+                .succeeded()
+                .notMultiplePaths()
+                .patternsMatch(pattern, 4096)
+                .emittedMatch()
+                .missingMatch()
+                .usedMatch(mult(input, 4096))
+                .outputMatches(mult(output, 4096));
+    }
+
+    @Test
+    public void testLargeMultiplePathOrder() {
+        var env = new SimulationEnv();
+
+        var input1 = item(Items.COBBLESTONE);
+        var input2 = item(Items.OAK_PLANKS);
+        var output = item(Items.DIAMOND);
+
+        var pattern1 = env.addPattern(new ProcessingPatternBuilder(output).addPreciseInput(1, input1).build());
+        var pattern2 = env.addPattern(new ProcessingPatternBuilder(output).addPreciseInput(1, input2).build());
+
+        env.addStoredItem(mult(input1, 256));
+        env.addStoredItem(mult(input2, 256));
+
+        var plan = env.runSimulation(mult(output, 512), CalculationStrategy.REPORT_MISSING_ITEMS);
+        assertThatPlan(plan)
+                .succeeded()
+                .multiplePaths()
+                .patternsMatch(pattern1, 256, pattern2, 256)
+                .emittedMatch()
+                .missingMatch()
+                .usedMatch(mult(input1, 256), mult(input2, 256))
+                .outputMatches(mult(output, 512));
+    }
+
+    @Test
+    public void testLargeMultiplePathOrderUsesBatchPlanning() {
+        var env = new SimulationEnv();
+
+        var input1 = item(Items.COBBLESTONE);
+        var input2 = item(Items.OAK_PLANKS);
+        var output = item(Items.DIAMOND);
+        var firstPathQueries = new AtomicLong();
+        var secondPathQueries = new AtomicLong();
+
+        env.addPattern(new ProcessingPatternBuilder(output)
+                .addCountingPreciseInput(1, firstPathQueries, input1)
+                .build());
+        env.addPattern(new ProcessingPatternBuilder(output)
+                .addCountingPreciseInput(1, secondPathQueries, input2)
+                .build());
+
+        env.addStoredItem(mult(input1, 256));
+        env.addStoredItem(mult(input2, 256));
+
+        var plan = env.runSimulation(mult(output, 512), CalculationStrategy.REPORT_MISSING_ITEMS);
+        assertThatPlan(plan).succeeded().outputMatches(mult(output, 512));
+
+        assertThat(firstPathQueries.get() + secondPathQueries.get())
+                .as("multi-path planning should query inputs by graph shape, not once per requested output")
+                .isLessThan(128);
     }
 
     /**
@@ -438,6 +571,16 @@ public class CraftingSimulationTest {
             return this;
         }
 
+        public CraftingPlanAssert multiplePaths() {
+            assertThat(plan.multiplePaths()).isTrue();
+            return this;
+        }
+
+        public CraftingPlanAssert notMultiplePaths() {
+            assertThat(plan.multiplePaths()).isFalse();
+            return this;
+        }
+
         public CraftingPlanAssert patternsMatch(IPatternDetails p1, long t1) {
             return patternsMatch(Map.of(p1, t1));
         }
@@ -460,7 +603,9 @@ public class CraftingSimulationTest {
             for (var expected : expectedList) {
                 var actual = actualList.get(expected.getKey());
 
-                assertThat(actual).isEqualTo(expected.getLongValue());
+                assertThat(actual)
+                        .as("amount for %s", expected.getKey())
+                        .isEqualTo(expected.getLongValue());
             }
 
             return this;

@@ -30,10 +30,7 @@ import appeng.api.config.Actionable;
 import appeng.api.config.FuzzyMode;
 import appeng.api.crafting.IPatternDetails;
 import appeng.api.stacks.AEKey;
-import appeng.api.stacks.GenericStack;
 import appeng.api.stacks.KeyCounter;
-import appeng.crafting.CraftingCalculation;
-import appeng.crafting.CraftingPlan;
 
 public abstract class CraftingSimulationState implements ICraftingSimulationState {
     /**
@@ -193,16 +190,4 @@ public abstract class CraftingSimulationState implements ICraftingSimulationStat
         }
     }
 
-    public static CraftingPlan buildCraftingPlan(CraftingSimulationState state,
-            CraftingCalculation calculation, long calculatedAmount) {
-        return new CraftingPlan(
-                new GenericStack(calculation.getOutput(), calculatedAmount),
-                (long) Math.ceil(state.bytes),
-                calculation.isSimulation(),
-                calculation.hasMultiplePaths(),
-                state.requiredExtract,
-                state.emittedItems,
-                calculation.getMissingItems(),
-                state.crafts);
-    }
 }

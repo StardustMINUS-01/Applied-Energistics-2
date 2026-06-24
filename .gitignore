@@ -25,12 +25,47 @@
 # include sourcecode
 !docs/
 !src/
-src/generated/resources/.cache
-out
-build
-!/libs/
+/src/generated/resources/.cache/
 !/guidebook
 /guidebook/sandbox
+
+# Build outputs and local run artifacts
+/build/
+/buildSrc/build/
+/.gradle/
+/out/
+/logs/
+/run/
+
+# Local IDE/editor state
+/.idea/
+/.vscode/
+*.iml
+*.ipr
+*.iws
+
+# Local assistant/workspace state
+/.superpowers/
+/.codex/
+
+# Local secrets, credentials and proxy/subscription configs
+/.env
+/.env.*
+/local.properties
+/secrets.properties
+/credentials.properties
+/private.properties
+/clash*.yml
+/clash*.yaml
+/proxy*.yml
+/proxy*.yaml
+/subscription*.txt
+/subscription*.yml
+/subscription*.yaml
+/sub-url*.txt
+
+# Local reference source trees copied into this workspace
+/Applied-Energistics-2-Unofficial-master/
 
 # include git important files
 !.gitmodules
@@ -46,3 +81,6 @@ build
 
 # Explicit ignores
 Thumbs.db
+Desktop.ini
+.DS_Store
+*.log

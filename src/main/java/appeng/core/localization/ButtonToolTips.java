@@ -126,6 +126,8 @@ public enum ButtonToolTips implements LocalizationEnum {
     Read("Extract Only"),
     ReadWrite("Bi-Directional"),
     RedstoneMode("Redstone Mode"),
+    ScaleProcessingPattern("Scale Processing Pattern"),
+    ScaleProcessingPatternHint("Multiply or divide processing inputs and outputs by %s."),
     ReportInaccessibleFluids("Report Inaccessible Fluids"),
     ReportInaccessibleFluidsNo("No: Only extractable fluids will be visible."),
     ReportInaccessibleFluidsYes("Yes: Fluids that cannot be extracted will be visible."),

@@ -14,6 +14,7 @@ import appeng.api.stacks.AEItemKey;
 import appeng.api.stacks.AEKey;
 import appeng.api.stacks.GenericStack;
 import appeng.core.localization.ItemModText;
+import appeng.integration.modules.gtceu.GTCEuPatternMetadataBridge;
 import appeng.integration.modules.itemlists.EncodingHelper;
 import appeng.menu.me.common.GridInventoryEntry;
 import appeng.menu.me.items.PatternEncodingTermMenu;
@@ -58,9 +59,17 @@ public class EmiEncodePatternHandler<T extends PatternEncodingTermMenu> extends 
                         getGuiIngredientsForCrafting(emiRecipe),
                         stack -> true);
             } else {
+                var virtualCircuit = GTCEuPatternMetadataBridge.getVirtualCircuitFromRecipe(recipe);
+                if (virtualCircuit.isEmpty()) {
+                    virtualCircuit = GTCEuPatternMetadataBridge.getVirtualCircuitFromRecipe(holder);
+                }
+                if (virtualCircuit.isEmpty()) {
+                    virtualCircuit = GTCEuPatternMetadataBridge.getVirtualCircuitFromRecipe(emiRecipe);
+                }
                 EncodingHelper.encodeProcessingRecipe(menu,
                         EmiStackHelper.ofInputs(emiRecipe),
-                        EmiStackHelper.ofOutputs(emiRecipe));
+                        EmiStackHelper.ofOutputs(emiRecipe),
+                        virtualCircuit);
             }
         } else {
             var repo = menu.getClientRepo();

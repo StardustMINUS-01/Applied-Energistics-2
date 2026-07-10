@@ -52,6 +52,7 @@ import appeng.core.definitions.AEItems;
 import appeng.crafting.pattern.AECraftingPattern;
 import appeng.crafting.pattern.AEProcessingPattern;
 import appeng.helpers.IPatternTerminalMenuHost;
+import appeng.integration.modules.gtceu.GTCEuPatternMetadataBridge;
 import appeng.menu.SlotSemantics;
 import appeng.menu.guisync.GuiSync;
 import appeng.menu.implementations.MenuTypeBuilder;
@@ -376,7 +377,14 @@ public class PatternEncodingTermMenu extends MEStorageMenu {
             return null;
         }
 
-        return PatternDetailsHelper.encodeProcessingPattern(Arrays.asList(inputs), Arrays.asList(outputs));
+        try {
+            return GTCEuPatternMetadataBridge.encodeProcessingPatternWithVirtualCircuitMetadata(
+                    Arrays.asList(inputs),
+                    Arrays.asList(outputs),
+                    java.util.OptionalInt.empty());
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
     }
 
     @Nullable
@@ -496,6 +504,8 @@ public class PatternEncodingTermMenu extends MEStorageMenu {
 
     @Override
     public void onSlotChange(Slot s) {
+        super.onSlotChange(s);
+
         if (s == this.encodedPatternSlot && isServerSide()) {
             this.broadcastChanges();
         }
@@ -552,6 +562,21 @@ public class PatternEncodingTermMenu extends MEStorageMenu {
 
     public EncodingMode getMode() {
         return this.mode;
+    }
+
+    public int getAvailableBlankPatternCount() {
+        return encodingLogic.getAvailableBlankPatternCount();
+    }
+
+    public boolean hasBlankPatterns(int amount) {
+        return amount <= 0 || getPlayer().getAbilities().instabuild || encodingLogic.hasBlankPatterns(amount);
+    }
+
+    public boolean consumeBlankPatterns(int amount) {
+        if (amount <= 0 || getPlayer().getAbilities().instabuild) {
+            return true;
+        }
+        return encodingLogic.consumeBlankPatterns(amount);
     }
 
     public void setMode(EncodingMode mode) {

@@ -10,6 +10,8 @@ import static org.mockito.Mockito.when;
 import java.util.ArrayList;
 import java.util.List;
 
+import com.gregtechceu.gtceu.common.item.behavior.IntCircuitBehaviour;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mock;
@@ -31,6 +33,7 @@ import appeng.api.crafting.PatternDetailsHelper;
 import appeng.api.stacks.AEItemKey;
 import appeng.api.stacks.GenericStack;
 import appeng.core.AppEng;
+import appeng.integration.modules.gtceu.GTCEuPatternMetadataBridge;
 import appeng.util.BootstrapMinecraft;
 import appeng.util.LoadTranslations;
 import appeng.util.RecursiveTagReplace;
@@ -124,6 +127,106 @@ class AEProcessingPatternTest {
                 "Produces: 1 x minecraft:stick (some_mod:missing_chan)",
                 "with: 1 x minecraft:torch (some_mod:missing_chan)",
                 " and 1 x minecraft:diamond (some_mod:missing_chan)");
+    }
+
+    @Test
+    void virtualCircuitInputBecomesDisplayOnlyMetadata() {
+        var realInput = GenericStack.fromItemStack(new ItemStack(Items.DIAMOND));
+        var circuitInput = GenericStack.fromItemStack(IntCircuitBehaviour.stack(7));
+        var output = GenericStack.fromItemStack(new ItemStack(Items.STICK));
+
+        var encoded = GTCEuPatternMetadataBridge.encodeProcessingPatternWithVirtualCircuitMetadata(
+                List.of(realInput, circuitInput),
+                List.of(output),
+                java.util.OptionalInt.empty());
+        var decoded = assertInstanceOf(AEProcessingPattern.class,
+                PatternDetailsHelper.decodePattern(encoded, mock(Level.class)));
+
+        assertThat(GTCEuPatternMetadataBridge.getVirtualCircuitFromEncodedPattern(encoded))
+                .hasValue(7);
+        assertThat(decoded.getInputs()).hasSize(1);
+        assertThat(decoded.getInputs()[0].getPossibleInputs()[0]).isEqualTo(realInput);
+        assertThat(decoded.getTooltip(mock(Level.class), TooltipFlag.NORMAL).getInputs())
+                .containsExactly(realInput, circuitInput);
+    }
+
+    @Test
+    void firstVirtualCircuitInputWinsAndAllCircuitInputsAreRemovedFromCosts() {
+        var realInput = GenericStack.fromItemStack(new ItemStack(Items.DIAMOND));
+        var firstCircuitInput = GenericStack.fromItemStack(IntCircuitBehaviour.stack(7));
+        var secondCircuitInput = GenericStack.fromItemStack(IntCircuitBehaviour.stack(24));
+        var output = GenericStack.fromItemStack(new ItemStack(Items.STICK));
+
+        var encoded = GTCEuPatternMetadataBridge.encodeProcessingPatternWithVirtualCircuitMetadata(
+                List.of(firstCircuitInput, realInput, secondCircuitInput),
+                List.of(output),
+                java.util.OptionalInt.empty());
+        var decoded = assertInstanceOf(AEProcessingPattern.class,
+                PatternDetailsHelper.decodePattern(encoded, mock(Level.class)));
+
+        assertThat(GTCEuPatternMetadataBridge.getVirtualCircuitFromEncodedPattern(encoded))
+                .hasValue(7);
+        assertThat(decoded.getInputs()).hasSize(1);
+        assertThat(decoded.getInputs()[0].getPossibleInputs()[0]).isEqualTo(realInput);
+        assertThat(decoded.getTooltip(mock(Level.class), TooltipFlag.NORMAL).getInputs())
+                .containsExactly(realInput, firstCircuitInput);
+    }
+
+    @Test
+    void virtualCircuitStackSizeDoesNotAffectMetadataExtraction() {
+        var realInput = GenericStack.fromItemStack(new ItemStack(Items.DIAMOND));
+        var circuitStack = IntCircuitBehaviour.stack(7);
+        circuitStack.setCount(99);
+        var oversizedCircuitInput = GenericStack.fromItemStack(circuitStack);
+        var output = GenericStack.fromItemStack(new ItemStack(Items.STICK));
+
+        var encoded = GTCEuPatternMetadataBridge.encodeProcessingPatternWithVirtualCircuitMetadata(
+                List.of(realInput, oversizedCircuitInput),
+                List.of(output),
+                java.util.OptionalInt.empty());
+        var decoded = assertInstanceOf(AEProcessingPattern.class,
+                PatternDetailsHelper.decodePattern(encoded, mock(Level.class)));
+
+        assertThat(GTCEuPatternMetadataBridge.getVirtualCircuitFromEncodedPattern(encoded))
+                .hasValue(7);
+        assertThat(decoded.getInputs()).hasSize(1);
+        assertThat(decoded.getInputs()[0].getPossibleInputs()[0]).isEqualTo(realInput);
+        assertThat(decoded.getTooltip(mock(Level.class), TooltipFlag.NORMAL).getInputs())
+                .containsExactly(realInput, GenericStack.fromItemStack(IntCircuitBehaviour.stack(7)));
+    }
+
+    @Test
+    void transferDoesNotAppendVirtualCircuitWhenIngredientAlreadyContainsOne() {
+        var realInput = GenericStack.fromItemStack(new ItemStack(Items.DIAMOND));
+        var circuitInput = GenericStack.fromItemStack(IntCircuitBehaviour.stack(7));
+        var ingredients = List.of(List.of(realInput), List.of(circuitInput));
+
+        var appended = GTCEuPatternMetadataBridge.appendVirtualCircuitIngredient(
+                ingredients,
+                java.util.OptionalInt.of(24));
+
+        assertThat(appended).containsExactlyElementsOf(ingredients);
+    }
+
+    @Test
+    void virtualCircuitMetadataParticipatesInPatternIdentity() {
+        var input = GenericStack.fromItemStack(new ItemStack(Items.DIAMOND));
+        var output = GenericStack.fromItemStack(new ItemStack(Items.STICK));
+
+        var first = GTCEuPatternMetadataBridge.encodeProcessingPatternWithVirtualCircuitMetadata(
+                List.of(input),
+                List.of(output),
+                java.util.OptionalInt.of(1));
+        var second = GTCEuPatternMetadataBridge.encodeProcessingPatternWithVirtualCircuitMetadata(
+                List.of(input),
+                List.of(output),
+                java.util.OptionalInt.of(2));
+
+        var firstDetails = PatternDetailsHelper.decodePattern(first, mock(Level.class));
+        var secondDetails = PatternDetailsHelper.decodePattern(second, mock(Level.class));
+
+        assertThat(firstDetails).isNotEqualTo(secondDetails);
+        assertThat(firstDetails.hashCode()).isNotEqualTo(secondDetails.hashCode());
     }
 
     private List<String> getExtraTooltip(CompoundTag tag) {

@@ -6,6 +6,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.OptionalInt;
 import java.util.function.Predicate;
 
 import com.google.common.math.LongMath;
@@ -26,6 +27,7 @@ import appeng.api.stacks.GenericStack;
 import appeng.core.network.ServerboundPacket;
 import appeng.core.network.serverbound.InventoryActionPacket;
 import appeng.helpers.InventoryAction;
+import appeng.integration.modules.gtceu.GTCEuPatternMetadataBridge;
 import appeng.menu.me.common.GridInventoryEntry;
 import appeng.menu.me.common.MEStorageMenu;
 import appeng.menu.me.items.PatternEncodingTermMenu;
@@ -51,13 +53,20 @@ public final class EncodingHelper {
 
     public static void encodeProcessingRecipe(PatternEncodingTermMenu menu, List<List<GenericStack>> genericIngredients,
             List<GenericStack> genericResults) {
+        encodeProcessingRecipe(menu, genericIngredients, genericResults, OptionalInt.empty());
+    }
+
+    public static void encodeProcessingRecipe(PatternEncodingTermMenu menu, List<List<GenericStack>> genericIngredients,
+            List<GenericStack> genericResults, OptionalInt virtualCircuit) {
         menu.setMode(EncodingMode.PROCESSING);
+        var ingredients = GTCEuPatternMetadataBridge.appendVirtualCircuitIngredient(genericIngredients,
+                virtualCircuit);
 
         // Note that this runs on the client and getClientRepo() is guaranteed to be available there.
         var ingredientPriorities = getIngredientPriorities(menu, ENTRY_COMPARATOR);
 
         encodeBestMatchingStacksIntoSlots(
-                genericIngredients,
+                ingredients,
                 ingredientPriorities,
                 menu.getProcessingInputSlots());
         encodeBestMatchingStacksIntoSlots(

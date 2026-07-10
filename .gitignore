@@ -25,6 +25,9 @@
 # include sourcecode
 !docs/
 !src/
+/docs/**
+!/docs/demo-scene.png
+!/docs/logo.png
 /docs/crafting-v2-migration/
 /docs/local-notes/
 /src/generated/resources/.cache/
@@ -67,6 +70,7 @@
 /sub-url*.txt
 
 # Local reference source trees copied into this workspace
+/ref/
 /Applied-Energistics-2-Unofficial-master/
 
 # include git important files

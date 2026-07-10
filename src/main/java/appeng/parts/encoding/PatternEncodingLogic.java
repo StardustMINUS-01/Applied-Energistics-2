@@ -44,6 +44,7 @@ import appeng.crafting.pattern.AESmithingTablePattern;
 import appeng.crafting.pattern.AEStonecuttingPattern;
 import appeng.helpers.IPatternTerminalLogicHost;
 import appeng.helpers.externalstorage.GenericStackInv;
+import appeng.integration.modules.gtceu.GTCEuPatternMetadataBridge;
 import appeng.util.ConfigInventory;
 import appeng.util.inv.AppEngInternalInventory;
 import appeng.util.inv.InternalInventoryHost;
@@ -113,14 +114,14 @@ public class PatternEncodingLogic implements InternalInventoryHost {
 
     private void onEncodedInputChanged() {
         fixCraftingRecipes();
-        if (!isClientSide()) {
+        if (!isLoading && !isClientSide()) {
             saveVisibleInputDraft(mode);
         }
         saveChanges();
     }
 
     private void onEncodedOutputChanged() {
-        if (!isClientSide()) {
+        if (!isLoading && !isClientSide()) {
             saveVisibleOutputDraft(mode);
         }
         saveChanges();
@@ -136,7 +137,7 @@ public class PatternEncodingLogic implements InternalInventoryHost {
         if (details instanceof AECraftingPattern craftingPattern) {
             loadCraftingPattern(craftingPattern);
         } else if (details instanceof AEProcessingPattern processingPattern) {
-            loadProcessingPattern(processingPattern);
+            loadProcessingPattern(pattern, processingPattern);
         } else if (details instanceof AESmithingTablePattern smithingTablePattern) {
             loadSmithingTablePattern(smithingTablePattern);
         } else if (details instanceof AEStonecuttingPattern stonecuttingPattern) {
@@ -155,10 +156,14 @@ public class PatternEncodingLogic implements InternalInventoryHost {
         fillInventoryFromSparseStacks(encodedOutputInv, pattern.getSparseOutputs());
     }
 
-    private void loadProcessingPattern(AEProcessingPattern pattern) {
+    private void loadProcessingPattern(ItemStack encodedPattern, AEProcessingPattern pattern) {
         setMode(EncodingMode.PROCESSING);
 
-        fillInventoryFromSparseStacks(encodedInputInv, pattern.getSparseInputs());
+        var inputs = GTCEuPatternMetadataBridge.restoreVirtualCircuitInput(
+                encodedPattern,
+                pattern.getSparseInputs(),
+                encodedInputInv.size());
+        fillInventoryFromSparseStacks(encodedInputInv, inputs);
         fillInventoryFromSparseStacks(encodedOutputInv, pattern.getSparseOutputs());
     }
 
@@ -268,6 +273,27 @@ public class PatternEncodingLogic implements InternalInventoryHost {
      */
     public InternalInventory getBlankPatternInv() {
         return blankPatternInv;
+    }
+
+    public int getAvailableBlankPatternCount() {
+        var stack = blankPatternInv.getStackInSlot(0);
+        return AEItems.BLANK_PATTERN.is(stack) ? stack.getCount() : 0;
+    }
+
+    public boolean hasBlankPatterns(int amount) {
+        return amount <= 0 || getAvailableBlankPatternCount() >= amount;
+    }
+
+    public boolean consumeBlankPatterns(int amount) {
+        if (amount <= 0) {
+            return true;
+        }
+        if (!hasBlankPatterns(amount)) {
+            return false;
+        }
+
+        var extracted = blankPatternInv.extractItem(0, amount, false);
+        return AEItems.BLANK_PATTERN.is(extracted) && extracted.getCount() == amount;
     }
 
     /**

@@ -38,6 +38,7 @@ import appeng.core.network.serverbound.PartLeftClickPacket;
 import appeng.core.network.serverbound.QuickMovePatternPacket;
 import appeng.core.network.serverbound.RequestClosestMeteoritePacket;
 import appeng.core.network.serverbound.SelectKeyTypePacket;
+import appeng.core.network.serverbound.ServerboundEncodeRecipeChainPatternsPacket;
 import appeng.core.network.serverbound.SwapSlotsPacket;
 import appeng.core.network.serverbound.SwitchGuisPacket;
 import appeng.core.network.serverbound.UpdateHoldingCtrlPacket;
@@ -79,6 +80,8 @@ public class InitNetwork {
         serverbound(registrar, PartLeftClickPacket.TYPE, PartLeftClickPacket.STREAM_CODEC);
         serverbound(registrar, QuickMovePatternPacket.TYPE, QuickMovePatternPacket.STREAM_CODEC);
         serverbound(registrar, SelectKeyTypePacket.TYPE, SelectKeyTypePacket.STREAM_CODEC);
+        serverbound(registrar, ServerboundEncodeRecipeChainPatternsPacket.TYPE,
+                ServerboundEncodeRecipeChainPatternsPacket.STREAM_CODEC);
         serverbound(registrar, SwapSlotsPacket.TYPE, SwapSlotsPacket.STREAM_CODEC);
         serverbound(registrar, SwitchGuisPacket.TYPE, SwitchGuisPacket.STREAM_CODEC);
         serverbound(registrar, UpdateHoldingCtrlPacket.TYPE, UpdateHoldingCtrlPacket.STREAM_CODEC);

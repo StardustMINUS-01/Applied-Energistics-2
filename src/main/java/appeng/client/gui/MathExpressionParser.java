@@ -3,7 +3,6 @@ package appeng.client.gui;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.text.DecimalFormat;
-import java.text.ParsePosition;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -14,6 +13,8 @@ public class MathExpressionParser {
     private static final BigDecimal ONE_BILLION = BigDecimal.valueOf(1e9);
 
     public static Optional<BigDecimal> parse(String expression, DecimalFormat decimalFormat) {
+        expression = normalizeInput(expression);
+
         // Parse using the Shunting Yard Algorithm
 
         List<Object> output = new ArrayList<>();
@@ -27,15 +28,12 @@ public class MathExpressionParser {
             }
 
             if (!wasNumberOrRightBracket && expression.charAt(i) != '-') {
-                var position = new ParsePosition(i);
-                Number parsedNumber = decimalFormat.parse(expression, position);
-                if (position.getErrorIndex() == -1) { // no error
-                    if (!(parsedNumber instanceof BigDecimal decimal)) {
-                        // NaN or infinity
-                        return Optional.empty();
-                    }
-                    output.add(decimal);
-                    i = position.getIndex();
+                var parsedNumber = parseNumber(expression, i);
+                if (parsedNumber.hasError()) {
+                    return Optional.empty();
+                } else if (parsedNumber.token() != null) {
+                    output.add(parsedNumber.token().value());
+                    i = parsedNumber.token().end();
                     wasNumberOrRightBracket = true;
                     continue;
                 }
@@ -88,7 +86,11 @@ public class MathExpressionParser {
         }
 
         while (!operatorStack.isEmpty()) {
-            output.add(operatorStack.pop());
+            var operator = operatorStack.pop();
+            if (operator == '(') {
+                return Optional.empty(); // mismatched parenthesis
+            }
+            output.add(operator);
         }
 
         Stack<BigDecimal> number = new Stack<>();
@@ -175,6 +177,164 @@ public class MathExpressionParser {
 
     private static boolean precedenceCheck(char first, char second) {
         return getPrecedence(first) <= getPrecedence(second);
+    }
+
+    public static String normalizeInput(String expression) {
+        StringBuilder result = null;
+
+        for (int i = 0; i < expression.length(); i++) {
+            char original = expression.charAt(i);
+            char normalized = normalizeChar(original);
+            if (result != null) {
+                result.append(normalized);
+            } else if (normalized != original) {
+                result = new StringBuilder(expression.length());
+                result.append(expression, 0, i);
+                result.append(normalized);
+            }
+        }
+
+        return result != null ? result.toString() : expression;
+    }
+
+    private static char normalizeChar(char c) {
+        if (c >= '０' && c <= '９') {
+            return (char) ('0' + c - '０');
+        }
+
+        return switch (c) {
+            case '（' -> '(';
+            case '）' -> ')';
+            case '，' -> ',';
+            case '．' -> '.';
+            case '＋' -> '+';
+            case '－', '−' -> '-';
+            case '＊', '×' -> '*';
+            case '／' -> '/';
+            case '＾' -> '^';
+            case 'ｅ' -> 'e';
+            default -> c;
+        };
+    }
+
+    private static NumberParseResult parseNumber(String expression, int start) {
+        char first = expression.charAt(start);
+        if (!isDigit(first) && first != '.') {
+            return NumberParseResult.none();
+        }
+
+        int i = start;
+        StringBuilder number = new StringBuilder();
+        List<Integer> groups = new ArrayList<>();
+        char separator = 0;
+        int groupSize = 0;
+        boolean hasIntegerDigit = false;
+        boolean lastWasSeparator = false;
+
+        while (i < expression.length()) {
+            char c = expression.charAt(i);
+            if (isDigit(c)) {
+                number.append(c);
+                groupSize++;
+                hasIntegerDigit = true;
+                lastWasSeparator = false;
+                i++;
+            } else if (c == ',' || c == '_') {
+                if (!hasIntegerDigit || lastWasSeparator) {
+                    return NumberParseResult.invalid();
+                }
+                if (separator == 0) {
+                    separator = c;
+                } else if (separator != c) {
+                    return NumberParseResult.invalid();
+                }
+                groups.add(groupSize);
+                groupSize = 0;
+                lastWasSeparator = true;
+                i++;
+            } else {
+                break;
+            }
+        }
+
+        if (lastWasSeparator) {
+            return NumberParseResult.invalid();
+        }
+
+        if (separator != 0) {
+            groups.add(groupSize);
+            if (groups.get(0) < 1 || groups.get(0) > 3) {
+                return NumberParseResult.invalid();
+            }
+            for (int group = 1; group < groups.size(); group++) {
+                if (groups.get(group) != 3) {
+                    return NumberParseResult.invalid();
+                }
+            }
+        }
+
+        int decimalDigits = 0;
+        if (i < expression.length() && expression.charAt(i) == '.') {
+            number.append('.');
+            i++;
+            while (i < expression.length() && isDigit(expression.charAt(i))) {
+                number.append(expression.charAt(i));
+                decimalDigits++;
+                i++;
+            }
+        }
+
+        if (!hasIntegerDigit && decimalDigits == 0) {
+            return NumberParseResult.invalid();
+        }
+
+        if (i < expression.length() && expression.charAt(i) == 'e') {
+            number.append('e');
+            i++;
+
+            if (i < expression.length() && (expression.charAt(i) == '+' || expression.charAt(i) == '-')) {
+                number.append(expression.charAt(i));
+                i++;
+            }
+
+            int exponentDigits = 0;
+            while (i < expression.length() && isDigit(expression.charAt(i))) {
+                number.append(expression.charAt(i));
+                exponentDigits++;
+                i++;
+            }
+
+            if (exponentDigits == 0) {
+                return NumberParseResult.invalid();
+            }
+        }
+
+        try {
+            return NumberParseResult.of(new NumberToken(new BigDecimal(number.toString()), i));
+        } catch (NumberFormatException e) {
+            return NumberParseResult.invalid();
+        }
+    }
+
+    private static boolean isDigit(char c) {
+        return c >= '0' && c <= '9';
+    }
+
+    private record NumberToken(BigDecimal value, int end) {
+    }
+
+    private record NumberParseResult(NumberToken token, boolean hasError) {
+        static NumberParseResult of(NumberToken token) {
+            return new NumberParseResult(token, false);
+        }
+
+        static NumberParseResult none() {
+            return new NumberParseResult(null, false);
+        }
+
+        static NumberParseResult invalid() {
+            return new NumberParseResult(null, true);
+        }
     }
 
 }

@@ -86,6 +86,7 @@ public class NumberEntryWidget implements ICompositeWidget {
     private Runnable onConfirm;
 
     private boolean hideValidationIcon;
+    private boolean normalizingText;
 
     private Rect2i bounds = new Rect2i(0, 0, 0, 0);
 
@@ -107,10 +108,21 @@ public class NumberEntryWidget implements ICompositeWidget {
 
         this.textField = new ConfirmableTextField(style, font, 0, 0, 0, font.lineHeight);
         this.textField.setBordered(false);
-        this.textField.setMaxLength(16);
+        this.textField.setMaxLength(64);
         this.textField.setTextColor(normalTextColor);
         this.textField.setVisible(true);
         this.textField.setResponder(text -> {
+            if (!normalizingText) {
+                var normalized = MathExpressionParser.normalizeInput(text);
+                if (!normalized.equals(text)) {
+                    normalizingText = true;
+                    int cursorPosition = this.textField.getCursorPosition();
+                    this.textField.setValue(normalized);
+                    this.textField.moveCursorTo(Math.min(cursorPosition, normalized.length()), false);
+                    normalizingText = false;
+                    return;
+                }
+            }
             validate();
             if (onChange != null) {
                 this.onChange.run();
@@ -312,23 +324,7 @@ public class NumberEntryWidget implements ICompositeWidget {
      * value.
      */
     public OptionalLong getLongValue() {
-        var internalValue = getValueInternal();
-        if (internalValue.isEmpty()) {
-            return OptionalLong.empty();
-        }
-
-        // Reject decimal values if the unit is integral
-        if (type.amountPerUnit() == 1 && internalValue.get().scale() > 0) {
-            return OptionalLong.empty();
-        }
-
-        var externalValue = convertToExternalValue(internalValue.get());
-        if (externalValue < minValue) {
-            return OptionalLong.empty();
-        } else if (externalValue > maxValue) {
-            return OptionalLong.empty();
-        }
-        return OptionalLong.of(externalValue);
+        return parseTextValue(getSanitizedTextValue(), decimalFormat, type, minValue, maxValue);
     }
 
     public void setLongValue(long value) {
@@ -358,11 +354,16 @@ public class NumberEntryWidget implements ICompositeWidget {
      * Retrieves the numeric representation of the value entered by the user, if it is convertible.
      */
     private Optional<BigDecimal> getValueInternal() {
+        var textValue = getSanitizedTextValue();
+        return MathExpressionParser.parse(textValue, decimalFormat);
+    }
+
+    private String getSanitizedTextValue() {
         var textValue = textField.getValue();
         if (textValue.startsWith("=")) {
             textValue = textValue.substring(1);
         }
-        return MathExpressionParser.parse(textValue, decimalFormat);
+        return textValue;
     }
 
     /*
@@ -392,11 +393,11 @@ public class NumberEntryWidget implements ICompositeWidget {
             if (type.amountPerUnit() == 1 && possibleValue.get().scale() > 0) {
                 validationErrors.add(GuiText.NumberNonInteger.text());
             } else {
-                var value = convertToExternalValue(possibleValue.get());
-                if (value < minValue) {
+                var externalValue = convertParsedValueToExternalValue(possibleValue.get(), type);
+                if (externalValue.compareTo(BigDecimal.valueOf(minValue)) < 0) {
                     var formatted = decimalFormat.format(convertToInternalValue(minValue));
                     validationErrors.add(GuiText.NumberLessThanMinValue.text(formatted));
-                } else if (value > maxValue) {
+                } else if (externalValue.compareTo(BigDecimal.valueOf(maxValue)) > 0) {
                     var formatted = decimalFormat.format(convertToInternalValue(maxValue));
                     validationErrors.add(GuiText.NumberGreaterThanMaxValue.text(formatted));
                 } else if (!isNumber()) { // is a mathematical expression
@@ -446,11 +447,36 @@ public class NumberEntryWidget implements ICompositeWidget {
         validate();
     }
 
-    private long convertToExternalValue(BigDecimal internalValue) {
+    static OptionalLong parseTextValue(String textValue, DecimalFormat decimalFormat, NumberEntryType type,
+            long minValue, long maxValue) {
+        var internalValue = MathExpressionParser.parse(textValue, decimalFormat);
+        if (internalValue.isEmpty()) {
+            return OptionalLong.empty();
+        }
+
+        return convertParsedValue(internalValue.get(), type, minValue, maxValue);
+    }
+
+    static OptionalLong convertParsedValue(BigDecimal internalValue, NumberEntryType type, long minValue,
+            long maxValue) {
+        // Reject decimal values if the unit is integral
+        if (type.amountPerUnit() == 1 && internalValue.scale() > 0) {
+            return OptionalLong.empty();
+        }
+
+        var externalValue = convertParsedValueToExternalValue(internalValue, type);
+        if (externalValue.compareTo(BigDecimal.valueOf(minValue)) < 0
+                || externalValue.compareTo(BigDecimal.valueOf(maxValue)) > 0) {
+            return OptionalLong.empty();
+        }
+
+        return OptionalLong.of(externalValue.longValueExact());
+    }
+
+    private static BigDecimal convertParsedValueToExternalValue(BigDecimal internalValue, NumberEntryType type) {
         var multiplicand = BigDecimal.valueOf(type.amountPerUnit());
         var value = internalValue.multiply(multiplicand, MathContext.DECIMAL128);
-        value = value.setScale(0, RoundingMode.UP);
-        return value.longValue();
+        return value.setScale(0, RoundingMode.UP);
     }
 
     private BigDecimal convertToInternalValue(long externalValue) {

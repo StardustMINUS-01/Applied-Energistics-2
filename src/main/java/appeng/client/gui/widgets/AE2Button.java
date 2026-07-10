@@ -32,7 +32,8 @@ public class AE2Button extends Button {
         pGuiGraphics.setColor(1.0F, 1.0F, 1.0F, this.alpha);
         RenderSystem.enableBlend();
         RenderSystem.enableDepthTest();
-        pGuiGraphics.blitSprite(SPRITES.get(this.active, this.isHovered()), this.getX(), this.getY(), this.getWidth(),
+        pGuiGraphics.blitSprite(getSprites().get(this.active, this.isHovered()), this.getX(), this.getY(),
+                this.getWidth(),
                 this.getHeight());
         pGuiGraphics.setColor(1.0F, 1.0F, 1.0F, 1.0F);
         if (!this.active) {
@@ -42,6 +43,10 @@ public class AE2Button extends Button {
         } else {
             this.renderButtonText(pGuiGraphics, minecraft.font, 2, 0xf2f2f2 | Mth.ceil(this.alpha * 255.0F) << 24, 1);
         }
+    }
+
+    protected WidgetSprites getSprites() {
+        return SPRITES;
     }
 
     public static void renderButtonText(GuiGraphics pGuiGraphics, Font pFont, Component pText, int pMinX, int pMinY,

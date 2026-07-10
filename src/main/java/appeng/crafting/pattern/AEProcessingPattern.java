@@ -38,6 +38,7 @@ import appeng.api.stacks.AEItemKey;
 import appeng.api.stacks.AEKey;
 import appeng.api.stacks.GenericStack;
 import appeng.api.stacks.KeyCounter;
+import appeng.integration.modules.gtceu.GTCEuPatternMetadataBridge;
 
 public class AEProcessingPattern implements IPatternDetails {
     public static final int MAX_INPUT_SLOTS = 9 * 9;
@@ -115,6 +116,15 @@ public class AEProcessingPattern implements IPatternDetails {
     }
 
     @Override
+    public PatternDetailsTooltip getTooltip(Level level, TooltipFlag flags) {
+        var tooltip = new PatternDetailsTooltip(PatternDetailsTooltip.OUTPUT_TEXT_PRODUCES);
+        sparseInputs.stream().filter(Objects::nonNull).forEach(tooltip::addInput);
+        GTCEuPatternMetadataBridge.appendVirtualCircuitDisplayInput(definition.toStack(), tooltip);
+        sparseOutputs.stream().filter(Objects::nonNull).forEach(tooltip::addOutput);
+        return tooltip;
+    }
+
+    @Override
     public void pushInputsToExternalInventory(KeyCounter[] inputHolder, PatternInputSink inputSink) {
         if (sparseInputs.size() == inputs.length) {
             // No compression -> no need to reorder
@@ -154,6 +164,7 @@ public class AEProcessingPattern implements IPatternDetails {
         var encodedPattern = stack.get(AEComponents.ENCODED_PROCESSING_PATTERN);
         if (encodedPattern != null) {
             encodedPattern.sparseInputs().stream().filter(Objects::nonNull).forEach(tooltip::addInput);
+            GTCEuPatternMetadataBridge.appendVirtualCircuitDisplayInput(stack, tooltip);
             encodedPattern.sparseOutputs().stream().filter(Objects::nonNull).forEach(tooltip::addOutput);
         }
 

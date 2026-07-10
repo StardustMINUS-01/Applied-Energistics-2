@@ -27,6 +27,7 @@ import me.shedaniel.rei.api.common.util.EntryStacks;
 import appeng.api.stacks.AEKey;
 import appeng.api.stacks.GenericStack;
 import appeng.core.localization.ItemModText;
+import appeng.integration.modules.gtceu.GTCEuPatternMetadataBridge;
 import appeng.integration.modules.itemlists.EncodingHelper;
 import appeng.integration.modules.itemlists.TransferHelper;
 import appeng.integration.modules.rei.GenericEntryStackHelper;
@@ -64,9 +65,17 @@ public class EncodePatternTransferHandler<T extends PatternEncodingTermMenu> ext
                         getGuiIngredientsForCrafting(display),
                         this::isIngredientVisible);
             } else {
+                var virtualCircuit = GTCEuPatternMetadataBridge.getVirtualCircuitFromRecipe(recipe);
+                if (virtualCircuit.isEmpty()) {
+                    virtualCircuit = GTCEuPatternMetadataBridge.getVirtualCircuitFromRecipe(holder);
+                }
+                if (virtualCircuit.isEmpty()) {
+                    virtualCircuit = GTCEuPatternMetadataBridge.getVirtualCircuitFromRecipe(display);
+                }
                 EncodingHelper.encodeProcessingRecipe(menu,
                         GenericEntryStackHelper.ofInputs(display),
-                        GenericEntryStackHelper.ofOutputs(display));
+                        GenericEntryStackHelper.ofOutputs(display),
+                        virtualCircuit);
             }
         } else {
             var repo = menu.getClientRepo();

@@ -131,6 +131,11 @@ public interface ICraftingService extends IGridService {
             @Nullable ICraftingCPU target,
             boolean prioritizePower, IActionSource src);
 
+    default ICraftingSubmitResult submitJob(ICraftingPlan job, @Nullable ICraftingRequester requestingMachine,
+            @Nullable ICraftingCPU target, boolean prioritizePower, IActionSource src, CraftingStartMode mode) {
+        return submitJob(job, requestingMachine, target, prioritizePower, src);
+    }
+
     /**
      * @return list of all the crafting cpus on the grid
      */

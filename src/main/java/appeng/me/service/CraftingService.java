@@ -49,6 +49,7 @@ import appeng.api.networking.IGrid;
 import appeng.api.networking.IGridNode;
 import appeng.api.networking.IGridServiceProvider;
 import appeng.api.networking.crafting.CalculationStrategy;
+import appeng.api.networking.crafting.CraftingStartMode;
 import appeng.api.networking.crafting.ICraftingCPU;
 import appeng.api.networking.crafting.ICraftingLink;
 import appeng.api.networking.crafting.ICraftingPlan;
@@ -359,7 +360,13 @@ public class CraftingService implements ICraftingService, IGridServiceProvider {
     @Override
     public ICraftingSubmitResult submitJob(ICraftingPlan job, ICraftingRequester requestingMachine, ICraftingCPU target,
             boolean prioritizePower, IActionSource src) {
-        if (job.simulation()) {
+        return submitJob(job, requestingMachine, target, prioritizePower, src, CraftingStartMode.NORMAL);
+    }
+
+    @Override
+    public ICraftingSubmitResult submitJob(ICraftingPlan job, ICraftingRequester requestingMachine, ICraftingCPU target,
+            boolean prioritizePower, IActionSource src, CraftingStartMode mode) {
+        if (mode == CraftingStartMode.NORMAL && job.simulation()) {
             return CraftingSubmitResult.INCOMPLETE_PLAN;
         }
 
@@ -381,7 +388,7 @@ public class CraftingService implements ICraftingService, IGridServiceProvider {
             }
         }
 
-        return cpuCluster.submitJob(this.grid, job, src, requestingMachine);
+        return cpuCluster.submitJob(this.grid, job, src, requestingMachine, mode);
     }
 
     @Nullable

@@ -61,6 +61,7 @@ import appeng.api.crafting.PatternDetailsHelper;
 import appeng.api.implementations.blockentities.PatternContainerGroup;
 import appeng.api.storage.ILinkStatus;
 import appeng.client.gui.AEBaseScreen;
+import appeng.client.gui.SearchTextDropTarget;
 import appeng.client.gui.TerminalGuiScale;
 import appeng.client.gui.style.PaletteColor;
 import appeng.client.gui.style.ScreenStyle;
@@ -76,7 +77,8 @@ import appeng.core.network.serverbound.QuickMovePatternPacket;
 import appeng.helpers.InventoryAction;
 import appeng.menu.implementations.PatternAccessTermMenu;
 
-public class PatternAccessTermScreen<C extends PatternAccessTermMenu> extends AEBaseScreen<C> {
+public class PatternAccessTermScreen<C extends PatternAccessTermMenu> extends AEBaseScreen<C>
+        implements SearchTextDropTarget {
     private static final Logger LOG = LoggerFactory.getLogger(PatternAccessTermScreen.class);
 
     private static final int GUI_WIDTH = 195;
@@ -555,6 +557,20 @@ public class PatternAccessTermScreen<C extends PatternAccessTermMenu> extends AE
 
         // lines may have changed - recalculate scroll bar.
         this.resetScrollbar();
+    }
+
+    @Override
+    public Optional<Rect2i> getSearchTextDropArea() {
+        if (!this.searchField.isTooltipAreaVisible()) {
+            return Optional.empty();
+        }
+        return Optional.of(this.searchField.getTooltipArea());
+    }
+
+    @Override
+    public void setSearchTextFromDrop(String searchText) {
+        this.searchField.setValue(searchText);
+        this.refreshList();
     }
 
     /**

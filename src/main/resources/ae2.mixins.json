@@ -9,6 +9,8 @@
     "spatial.MinecraftServerMixin",
     "AnvilMenuMixin",
     "EnchantmentHelperMixin",
+    "extendedae.ContainerPatternAccessor",
+    "extendedae.ContainerProcessingPatternMixin",
     "ItemEntityMixin",
     "tests.StructureUtilsMixin",
     "tests.TestCommandMixin",
@@ -17,6 +19,7 @@
   "client": [
     "AbstractContainerScreenMixin",
     "GuiGraphicsMixin",
+    "extendedae.ExtendedAePatternPreviewScreenMixin",
     "WrappedGenericStackTooltipModIdMixin",
     "PickColorMixin",
     "TextureAtlasMixin",

@@ -35,6 +35,7 @@ import net.minecraft.world.level.Level;
 import appeng.api.networking.IGrid;
 import appeng.api.networking.IGridNode;
 import appeng.api.networking.crafting.CalculationStrategy;
+import appeng.api.networking.crafting.CraftingStartMode;
 import appeng.api.networking.crafting.CraftingSubmitErrorCode;
 import appeng.api.networking.crafting.ICraftingCPU;
 import appeng.api.networking.crafting.ICraftingPlan;
@@ -125,7 +126,7 @@ public class CraftConfirmMenu extends AEBaseMenu implements ISubMenu {
 
         registerClientAction(ACTION_BACK, this::goBack);
         registerClientAction(ACTION_CYCLE_CPU, Boolean.class, this::cycleSelectedCPU);
-        registerClientAction(ACTION_START_JOB, this::startJob);
+        registerClientAction(ACTION_START_JOB, CraftingStartMode.class, this::startJob);
         registerClientAction(ACTION_REPLAN, this::replan);
     }
 
@@ -254,16 +255,20 @@ public class CraftConfirmMenu extends AEBaseMenu implements ISubMenu {
     }
 
     public void startJob() {
+        startJob(CraftingStartMode.NORMAL);
+    }
+
+    public void startJob(CraftingStartMode mode) {
         clearError();
 
         if (isClientSide()) {
-            sendClientAction(ACTION_START_JOB);
+            sendClientAction(ACTION_START_JOB, mode);
             return;
         }
 
-        if (this.result != null && !this.result.simulation()) {
+        if (this.result != null && (!this.result.simulation() || mode == CraftingStartMode.FORCE_START)) {
             final ICraftingService cc = this.getGrid().getCraftingService();
-            var submitResult = cc.submitJob(this.result, null, this.selectedCpu, true, this.getActionSrc());
+            var submitResult = cc.submitJob(this.result, null, this.selectedCpu, true, this.getActionSrc(), mode);
             this.setAutoStart(false);
             if (submitResult.successful()) {
                 if (autoCraftingQueue != null && !autoCraftingQueue.isEmpty()) {

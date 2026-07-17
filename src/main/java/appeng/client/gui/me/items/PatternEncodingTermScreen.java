@@ -19,12 +19,17 @@
 package appeng.client.gui.me.items;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
 
+import com.mojang.blaze3d.platform.InputConstants;
+
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.inventory.Slot;
@@ -33,15 +38,16 @@ import net.neoforged.neoforge.network.PacketDistributor;
 
 import appeng.api.behaviors.ContainerItemStrategies;
 import appeng.api.behaviors.EmptyingAction;
-import appeng.api.config.ActionItems;
 import appeng.api.stacks.GenericStack;
+import appeng.client.gui.Icon;
 import appeng.client.gui.me.common.MEStorageScreen;
 import appeng.client.gui.me.common.StackSizeRenderer;
 import appeng.client.gui.style.ScreenStyle;
-import appeng.client.gui.widgets.ActionButton;
+import appeng.client.gui.widgets.IconButton;
 import appeng.client.gui.widgets.TabButton;
 import appeng.core.AEConfig;
 import appeng.core.localization.ButtonToolTips;
+import appeng.core.localization.GuiText;
 import appeng.core.localization.Tooltips;
 import appeng.core.network.ServerboundPacket;
 import appeng.core.network.serverbound.InventoryActionPacket;
@@ -53,6 +59,7 @@ import appeng.parts.encoding.EncodingMode;
 public class PatternEncodingTermScreen<C extends PatternEncodingTermMenu> extends MEStorageScreen<C> {
     private final Map<EncodingMode, EncodingModePanel> modePanels = new EnumMap<>(EncodingMode.class);
     private final Map<EncodingMode, TabButton> modeTabButtons = new EnumMap<>(EncodingMode.class);
+    private final EncodePatternButton encodeButton;
 
     public PatternEncodingTermScreen(C menu, Inventory playerInventory,
             Component title, ScreenStyle style) {
@@ -78,8 +85,58 @@ public class PatternEncodingTermScreen<C extends PatternEncodingTermMenu> extend
             modePanels.put(mode, panel);
         }
 
-        var encodeBtn = new ActionButton(ActionItems.ENCODE, act -> menu.encode());
-        widgets.add("encodePattern", encodeBtn);
+        this.encodeButton = new EncodePatternButton(btn -> {
+            if (Screen.hasShiftDown()) {
+                menu.encodeAndUpload();
+            } else {
+                menu.encode();
+            }
+        });
+        widgets.add("encodePattern", encodeButton);
+
+        addToLeftToolbar(new IconButton(btn -> menu.openPatternUploadManagement()) {
+            @Override
+            protected Icon getIcon() {
+                return Icon.ARROW_UP;
+            }
+
+            @Override
+            public List<Component> getTooltipMessage() {
+                return List.of(GuiText.PatternUpload.text());
+            }
+        });
+    }
+
+    private static class EncodePatternButton extends IconButton {
+        private static final Component ENCODE_MESSAGE = buildMessage(
+                ButtonToolTips.Encode,
+                ButtonToolTips.EncodeDescription);
+        private static final Component ENCODE_AND_UPLOAD_MESSAGE = buildMessage(
+                ButtonToolTips.EncodeAndUpload,
+                ButtonToolTips.EncodeAndUploadDescription,
+                ButtonToolTips.RecallLastUploadedPatternDescription);
+
+        EncodePatternButton(Button.OnPress onPress) {
+            super(onPress);
+        }
+
+        @Override
+        protected Icon getIcon() {
+            return Screen.hasShiftDown() ? Icon.ARROW_UP : Icon.WHITE_ARROW_DOWN;
+        }
+
+        @Override
+        public List<Component> getTooltipMessage() {
+            return Collections.singletonList(Screen.hasShiftDown() ? ENCODE_AND_UPLOAD_MESSAGE : ENCODE_MESSAGE);
+        }
+
+        private static Component buildMessage(ButtonToolTips displayName, ButtonToolTips... displayValues) {
+            var message = new StringBuilder(displayName.text().getString());
+            for (var displayValue : displayValues) {
+                message.append('\n').append(displayValue.text().getString());
+            }
+            return Component.literal(message.toString());
+        }
     }
 
     @Override
@@ -100,6 +157,21 @@ public class PatternEncodingTermScreen<C extends PatternEncodingTermMenu> extend
 
     @Override
     protected boolean mouseClickedTerminal(double xCoord, double yCoord, int btn) {
+        if (Screen.hasControlDown() && btn == InputConstants.MOUSE_BUTTON_LEFT && menu.getCarried().isEmpty()) {
+            var slot = this.findSlot(xCoord, yCoord);
+            var catalystIndex = menu.getProcessingInputSlotIndex(slot);
+            if (catalystIndex >= 0 && slot.hasItem()) {
+                menu.toggleCatalyst(catalystIndex);
+                return true;
+            }
+        }
+
+        if (Screen.hasShiftDown() && btn == InputConstants.MOUSE_BUTTON_RIGHT
+                && encodeButton.isMouseOver(xCoord, yCoord)) {
+            menu.recallLastUploadedPattern();
+            return true;
+        }
+
         // handler for middle mouse button crafting in survival mode
         if (this.minecraft.options.keyPickItem.matchesMouse(btn)) {
             var slot = this.findSlot(xCoord, yCoord);
@@ -160,6 +232,14 @@ public class PatternEncodingTermScreen<C extends PatternEncodingTermMenu> extend
     @Override
     public void renderSlot(GuiGraphics guiGraphics, Slot s) {
         super.renderSlot(guiGraphics, s);
+
+        if (menu.isCatalystSlot(s)) {
+            var poseStack = guiGraphics.pose();
+            poseStack.pushPose();
+            poseStack.translate(0, 0, 500);
+            guiGraphics.drawString(this.font, "C", s.x + 11, s.y - 1, 0xFFFFFF00, false);
+            poseStack.popPose();
+        }
 
         if (shouldShowCraftableIndicatorForSlot(s)) {
             var poseStack = guiGraphics.pose();

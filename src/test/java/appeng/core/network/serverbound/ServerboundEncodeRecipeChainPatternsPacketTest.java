@@ -9,6 +9,7 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 
 import appeng.api.stacks.GenericStack;
+import appeng.crafting.pattern.PatternCatalyst;
 import appeng.integration.jei.patternencoding.PatternEncodeMode;
 import appeng.integration.jei.patternencoding.PatternEncodeRequest;
 import appeng.util.CodecTestUtil;
@@ -23,6 +24,8 @@ class ServerboundEncodeRecipeChainPatternsPacketTest {
                 PatternEncodeMode.PROCESSING,
                 List.of(GenericStack.fromItemStack(new ItemStack(Items.IRON_INGOT))),
                 List.of(GenericStack.fromItemStack(new ItemStack(Items.IRON_BLOCK))),
+                List.of(new PatternCatalyst(0, GenericStack.fromItemStack(new ItemStack(Items.IRON_INGOT)))),
+                List.of(),
                 null,
                 false,
                 false);
@@ -32,6 +35,8 @@ class ServerboundEncodeRecipeChainPatternsPacketTest {
                 PatternEncodeMode.CRAFTING,
                 List.of(GenericStack.fromItemStack(new ItemStack(Items.OAK_LOG))),
                 List.of(),
+                List.of(),
+                List.of(GenericStack.fromItemStack(new ItemStack(Items.OAK_LOG))),
                 ResourceLocation.fromNamespaceAndPath("minecraft", "oak_planks"),
                 true,
                 false);

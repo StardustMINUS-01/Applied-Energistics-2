@@ -49,8 +49,15 @@ public class CraftingStatusTableRenderer extends AbstractTableRenderer<CraftingS
         }
 
         if (entry.getActiveAmount() > 0) {
-            String amount = entry.getWhat().formatAmount(entry.getActiveAmount(), AmountFormat.SLOT);
-            lines.add(GuiText.Crafting.text(amount));
+            long craftingAmount = entry.getActiveAmount() - entry.getForceStartAmount();
+            if (craftingAmount > 0) {
+                String amount = entry.getWhat().formatAmount(craftingAmount, AmountFormat.SLOT);
+                lines.add(GuiText.Crafting.text(amount));
+            }
+            if (entry.getForceStartAmount() > 0) {
+                String amount = entry.getWhat().formatAmount(entry.getForceStartAmount(), AmountFormat.SLOT);
+                lines.add(GuiText.WaitingForForceStart.text(amount));
+            }
         }
 
         if (entry.getPendingAmount() > 0) {
@@ -75,8 +82,15 @@ public class CraftingStatusTableRenderer extends AbstractTableRenderer<CraftingS
                     .text(entry.getWhat().formatAmount(entry.getStoredAmount(), AmountFormat.FULL)));
         }
         if (entry.getActiveAmount() > 0) {
-            lines.add(GuiText.Crafting
-                    .text(entry.getWhat().formatAmount(entry.getActiveAmount(), AmountFormat.FULL)));
+            long craftingAmount = entry.getActiveAmount() - entry.getForceStartAmount();
+            if (craftingAmount > 0) {
+                lines.add(GuiText.Crafting
+                        .text(entry.getWhat().formatAmount(craftingAmount, AmountFormat.FULL)));
+            }
+            if (entry.getForceStartAmount() > 0) {
+                lines.add(GuiText.WaitingForForceStart
+                        .text(entry.getWhat().formatAmount(entry.getForceStartAmount(), AmountFormat.FULL)));
+            }
         }
         if (entry.getPendingAmount() > 0) {
             lines.add(GuiText.Scheduled.text(
@@ -90,7 +104,9 @@ public class CraftingStatusTableRenderer extends AbstractTableRenderer<CraftingS
     @Override
     protected int getEntryBackgroundColor(CraftingStatusEntry entry) {
         if (AEConfig.instance().isUseColoredCraftingStatus()) {
-            if (entry.getActiveAmount() > 0) {
+            if (entry.getForceStartAmount() > 0) {
+                return AEColor.PURPLE.blackVariant | BACKGROUND_ALPHA;
+            } else if (entry.getActiveAmount() > 0) {
                 return AEColor.GREEN.blackVariant | BACKGROUND_ALPHA;
             } else if (entry.getPendingAmount() > 0) {
                 return AEColor.YELLOW.blackVariant | BACKGROUND_ALPHA;

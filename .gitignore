@@ -25,12 +25,18 @@
 # include sourcecode
 !docs/
 !src/
+!StellarAE/
+!StellarAE/build.gradle
+!StellarAE/src/
+!StellarAE/src/**
 /docs/**
 !/docs/demo-scene.png
 !/docs/logo.png
 /docs/crafting-v2-migration/
 /docs/local-notes/
 /src/generated/resources/.cache/
+/StellarAE/build/
+/StellarAE/.gradle/
 !/guidebook
 /guidebook/sandbox
 

@@ -19,6 +19,7 @@ package appeng.crafting.execution;
 
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.Consumer;
@@ -29,6 +30,7 @@ import org.jetbrains.annotations.Nullable;
 
 import net.minecraft.core.HolderLookup;
 import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.Tag;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.Level;
 
@@ -37,6 +39,7 @@ import appeng.api.config.PowerMultiplier;
 import appeng.api.crafting.IPatternDetails;
 import appeng.api.features.IPlayerRegistry;
 import appeng.api.networking.IGrid;
+import appeng.api.networking.crafting.CraftingStartMode;
 import appeng.api.networking.crafting.IBulkCraftingProvider;
 import appeng.api.networking.crafting.ICraftingLink;
 import appeng.api.networking.crafting.ICraftingPlan;
@@ -76,6 +79,7 @@ public class CraftingCpuLogic {
      * Inventory.
      */
     private final ListCraftingInventory inventory = new ListCraftingInventory(CraftingCpuLogic.this::postChange);
+    private final ForceStartTracker forceStart = new ForceStartTracker();
     /**
      * Used crafting operations over the last 3 ticks.
      */
@@ -95,6 +99,14 @@ public class CraftingCpuLogic {
 
     public ICraftingSubmitResult trySubmitJob(IGrid grid, ICraftingPlan plan, IActionSource src,
             @Nullable ICraftingRequester requester) {
+        return trySubmitJob(grid, plan, src, requester, CraftingStartMode.NORMAL);
+    }
+
+    public ICraftingSubmitResult trySubmitJob(IGrid grid, ICraftingPlan plan, IActionSource src,
+            @Nullable ICraftingRequester requester, CraftingStartMode mode) {
+        if (mode == CraftingStartMode.NORMAL && plan.simulation()) {
+            return CraftingSubmitResult.INCOMPLETE_PLAN;
+        }
         // Already have a job.
         if (hasJob())
             return CraftingSubmitResult.CPU_BUSY;
@@ -109,9 +121,14 @@ public class CraftingCpuLogic {
             AELog.warn("Crafting CPU inventory is not empty yet a job was submitted.");
 
         // Try to extract required items.
-        var missingIngredient = CraftingCpuHelper.tryExtractInitialItems(plan, grid, inventory, src);
-        if (missingIngredient != null)
-            return CraftingSubmitResult.missingIngredient(missingIngredient);
+        KeyCounter runtimeMissingItems = null;
+        if (mode == CraftingStartMode.FORCE_START) {
+            runtimeMissingItems = CraftingCpuHelper.tryExtractInitialItems(plan, grid, inventory, src, true);
+        } else {
+            var missingIngredient = CraftingCpuHelper.tryExtractInitialItems(plan, grid, inventory, src);
+            if (missingIngredient != null)
+                return CraftingSubmitResult.missingIngredient(missingIngredient);
+        }
 
         // Set CPU link and job.
         var playerId = src.player()
@@ -123,6 +140,17 @@ public class CraftingCpuLogic {
             this.ledgerJob = new ExecutingLedgerCraftingJob(ledgerPlan, this::postChange, linkCpu, playerId);
         } else {
             this.job = new ExecutingCraftingJob(plan, this::postChange, linkCpu, playerId);
+        }
+        if (mode == CraftingStartMode.FORCE_START) {
+            this.forceStart.set(plan.missingItems());
+            if (runtimeMissingItems != null) {
+                this.forceStart.addAll(runtimeMissingItems);
+            }
+            for (var entry : this.forceStart.snapshot().entrySet()) {
+                postChange(entry.getKey());
+            }
+        } else {
+            this.forceStart.clear();
         }
         cluster.updateOutput(plan.finalOutput());
         cluster.markDirty();
@@ -546,7 +574,7 @@ public class CraftingCpuLogic {
         // Only accept items we are waiting for.
         var waitingFor = job.waitingFor.extract(what, amount, Actionable.SIMULATE);
         if (waitingFor <= 0) {
-            return 0;
+            return insertIntoForceStart(what, amount, type, false);
         }
 
         // Make sure we don't insert more than what we are waiting for.
@@ -604,7 +632,7 @@ public class CraftingCpuLogic {
 
         var waitingFor = job.waitingFor.extract(what, amount, Actionable.SIMULATE);
         if (waitingFor <= 0) {
-            return 0;
+            return insertIntoForceStart(what, amount, type, true);
         }
 
         if (amount > waitingFor) {
@@ -640,6 +668,19 @@ public class CraftingCpuLogic {
         return inserted;
     }
 
+    private long insertIntoForceStart(AEKey what, long amount, Actionable type, boolean ledger) {
+        var inserted = this.forceStart.insert(what, amount, type);
+        if (inserted > 0 && type == Actionable.MODULATE) {
+            inventory.insert(what, inserted, Actionable.MODULATE);
+            if (ledger) {
+                cpuInventoryChangeSerial++;
+            }
+            cluster.markDirty();
+            postChange(what);
+        }
+        return inserted;
+    }
+
     /**
      * Finish the current job.
      *
@@ -656,6 +697,7 @@ public class CraftingCpuLogic {
 
         // Clear waitingFor list and post all the relevant changes.
         job.waitingFor.clear();
+        clearForceStart();
         // Notify opened menus of cancelled scheduled tasks.
         for (var entry : job.tasks.entrySet()) {
             for (var output : entry.getKey().getOutputs()) {
@@ -681,6 +723,7 @@ public class CraftingCpuLogic {
         }
 
         ledgerJob.waitingFor.clear();
+        clearForceStart();
         for (var task : ledgerJob.tasks) {
             for (var output : task.pattern().getOutputs()) {
                 postChange(output.what());
@@ -784,6 +827,10 @@ public class CraftingCpuLogic {
 
     public void readFromNBT(CompoundTag data, HolderLookup.Provider registries) {
         this.inventory.readFromNBT(data.getList("inventory", 10), registries);
+        this.forceStart.readFromNBT(data.getList("forceStart", Tag.TAG_COMPOUND), registries);
+        if (this.forceStart.isEmpty() && data.contains("manualSupply", Tag.TAG_LIST)) {
+            this.forceStart.readFromNBT(data.getList("manualSupply", Tag.TAG_COMPOUND), registries);
+        }
         if (data.contains("job")) {
             this.job = new ExecutingCraftingJob(data.getCompound("job"), registries, this::postChange, this);
             if (this.job.finalOutput == null) {
@@ -801,11 +848,15 @@ public class CraftingCpuLogic {
             }
         } else {
             cluster.updateOutput(null);
+            this.forceStart.clear();
         }
     }
 
     public void writeToNBT(CompoundTag data, HolderLookup.Provider registries) {
         data.put("inventory", this.inventory.writeToNBT(registries));
+        if (!this.forceStart.isEmpty()) {
+            data.put("forceStart", this.forceStart.writeToNBT(registries));
+        }
         if (this.job != null) {
             data.put("job", this.job.writeToNBT(registries));
         } else if (this.ledgerJob != null) {
@@ -845,9 +896,11 @@ public class CraftingCpuLogic {
 
     public long getWaitingFor(AEKey template) {
         if (this.job != null) {
-            return this.job.waitingFor.extract(template, Long.MAX_VALUE, Actionable.SIMULATE);
+            return this.job.waitingFor.extract(template, Long.MAX_VALUE, Actionable.SIMULATE)
+                    + this.forceStart.get(template);
         } else if (this.ledgerJob != null) {
-            return this.ledgerJob.waitingFor.extract(template, Long.MAX_VALUE, Actionable.SIMULATE);
+            return this.ledgerJob.waitingFor.extract(template, Long.MAX_VALUE, Actionable.SIMULATE)
+                    + this.forceStart.get(template);
         }
         return 0;
     }
@@ -862,6 +915,7 @@ public class CraftingCpuLogic {
                 waitingFor.add(entry.getKey());
             }
         }
+        waitingFor.addAll(this.forceStart.snapshot().keySet());
     }
 
     public long getPendingOutputs(AEKey template) {
@@ -891,6 +945,7 @@ public class CraftingCpuLogic {
      */
     public void getAllItems(KeyCounter out) {
         out.addAll(this.inventory.list);
+        out.addAll(this.forceStart.snapshotCounter());
         if (this.job != null) {
             out.addAll(job.waitingFor.list);
             for (var t : job.tasks.entrySet()) {
@@ -914,6 +969,26 @@ public class CraftingCpuLogic {
 
     public boolean isJobSuspended() {
         return job != null && job.suspended || ledgerJob != null && ledgerJob.suspended;
+    }
+
+    public Map<AEKey, Long> getForceStartSnapshot() {
+        return this.forceStart.snapshot();
+    }
+
+    public long getForceStartAmount(AEKey what) {
+        return this.forceStart.get(what);
+    }
+
+    private void clearForceStart() {
+        if (this.forceStart.isEmpty()) {
+            return;
+        }
+        var changed = this.forceStart.snapshot().keySet();
+        this.forceStart.clear();
+        for (var what : changed) {
+            postChange(what);
+        }
+        cluster.markDirty();
     }
 
     public void setJobSuspended(boolean suspended) {

@@ -23,6 +23,7 @@ import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 
 import com.google.common.collect.Sets;
@@ -36,6 +37,7 @@ import org.slf4j.LoggerFactory;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.renderer.Rect2i;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.inventory.ClickType;
@@ -69,6 +71,8 @@ import appeng.client.Point;
 import appeng.client.gui.AEBaseScreen;
 import appeng.client.gui.AESubScreen;
 import appeng.client.gui.Icon;
+import appeng.client.gui.SearchText;
+import appeng.client.gui.SearchTextDropTarget;
 import appeng.client.gui.TerminalGuiScale;
 import appeng.client.gui.style.Blitter;
 import appeng.client.gui.style.ScreenStyle;
@@ -103,7 +107,7 @@ import appeng.util.Platform;
 import appeng.util.prioritylist.IPartitionList;
 
 public class MEStorageScreen<C extends MEStorageMenu>
-        extends AEBaseScreen<C> implements ISortSource {
+        extends AEBaseScreen<C> implements ISortSource, SearchTextDropTarget {
 
     private static final Logger LOG = LoggerFactory.getLogger(MEStorageScreen.class);
 
@@ -517,6 +521,14 @@ public class MEStorageScreen<C extends MEStorageMenu>
 
     @Override
     protected boolean mouseClickedTerminal(double xCoord, double yCoord, int btn) {
+        if (this.searchField.isMouseOver(xCoord, yCoord)) {
+            var searchText = getCarriedItemSearchText(btn, this.menu.getCarried());
+            if (searchText.isPresent()) {
+                setSearchTextFromDrop(searchText.get());
+                return true;
+            }
+        }
+
         // Right-clicking on the search field should clear it
         if (this.searchField.isMouseOver(xCoord, yCoord) && btn == 1) {
             this.searchField.setValue("");
@@ -534,6 +546,13 @@ public class MEStorageScreen<C extends MEStorageMenu>
         }
 
         return super.mouseClickedTerminal(xCoord, yCoord, btn);
+    }
+
+    static Optional<String> getCarriedItemSearchText(int mouseButton, ItemStack carried) {
+        if (mouseButton != InputConstants.MOUSE_BUTTON_LEFT) {
+            return Optional.empty();
+        }
+        return SearchText.fromItemStack(carried);
     }
 
     @Override
@@ -853,6 +872,27 @@ public class MEStorageScreen<C extends MEStorageMenu>
         repo.setSearchString(text);
         repo.updateView();
         updateScrollbar();
+    }
+
+    @Override
+    public Optional<Rect2i> getSearchTextDropArea() {
+        if (!this.searchField.isTooltipAreaVisible()) {
+            return Optional.empty();
+        }
+        return Optional.of(this.searchField.getTooltipArea());
+    }
+
+    @Override
+    public void setSearchTextFromDrop(String searchText) {
+        this.searchField.setValue(searchText);
+        setSearchText(searchText);
+        this.setFocused(this.searchField);
+        positionDroppedSearchCursor(this.searchField);
+    }
+
+    static void positionDroppedSearchCursor(AETextField searchField) {
+        searchField.setCursorPosition(0);
+        searchField.setHighlightPos(0);
     }
 
     private void reinitalize() {

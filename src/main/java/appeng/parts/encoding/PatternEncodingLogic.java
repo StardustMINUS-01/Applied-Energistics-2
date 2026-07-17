@@ -42,6 +42,8 @@ import appeng.crafting.pattern.AECraftingPattern;
 import appeng.crafting.pattern.AEProcessingPattern;
 import appeng.crafting.pattern.AESmithingTablePattern;
 import appeng.crafting.pattern.AEStonecuttingPattern;
+import appeng.crafting.pattern.PatternCatalyst;
+import appeng.crafting.pattern.PatternVirtualInputHelper;
 import appeng.helpers.IPatternTerminalLogicHost;
 import appeng.helpers.externalstorage.GenericStackInv;
 import appeng.integration.modules.gtceu.GTCEuPatternMetadataBridge;
@@ -55,6 +57,7 @@ public class PatternEncodingLogic implements InternalInventoryHost {
     private static final String MODE_DRAFTS_TAG = "modeDrafts";
     private static final String DRAFT_INPUTS_TAG = "inputs";
     private static final String DRAFT_OUTPUTS_TAG = "outputs";
+    private static final String CATALYSTS_TAG = "catalysts";
 
     private static final int MAX_INPUT_SLOTS = Math.max(AECraftingPattern.CRAFTING_GRID_SLOTS,
             AEProcessingPattern.MAX_INPUT_SLOTS);
@@ -71,6 +74,7 @@ public class PatternEncodingLogic implements InternalInventoryHost {
     private final AppEngInternalInventory encodedPatternInv = new AppEngInternalInventory(this, 1);
     private final Map<EncodingMode, List<GenericStack>> inputDrafts = new EnumMap<>(EncodingMode.class);
     private final Map<EncodingMode, List<GenericStack>> outputDrafts = new EnumMap<>(EncodingMode.class);
+    private List<GenericStack> catalystMarkers = emptyDraft(MAX_INPUT_SLOTS);
 
     private EncodingMode mode = EncodingMode.CRAFTING;
     private boolean substitute = false;
@@ -113,6 +117,7 @@ public class PatternEncodingLogic implements InternalInventoryHost {
     }
 
     private void onEncodedInputChanged() {
+        pruneCatalystMarkers();
         fixCraftingRecipes();
         if (!isLoading && !isClientSide()) {
             saveVisibleInputDraft(mode);
@@ -148,6 +153,7 @@ public class PatternEncodingLogic implements InternalInventoryHost {
     }
 
     private void loadCraftingPattern(AECraftingPattern pattern) {
+        clearCatalystMarkers();
         setMode(EncodingMode.CRAFTING);
         this.substitute = pattern.canSubstitute();
         this.substituteFluids = pattern.canSubstituteFluids();
@@ -159,15 +165,38 @@ public class PatternEncodingLogic implements InternalInventoryHost {
     private void loadProcessingPattern(ItemStack encodedPattern, AEProcessingPattern pattern) {
         setMode(EncodingMode.PROCESSING);
 
-        var inputs = GTCEuPatternMetadataBridge.restoreVirtualCircuitInput(
+        var inputs = new ArrayList<GenericStack>(pattern.getSparseInputs());
+        while (inputs.size() < encodedInputInv.size()) {
+            inputs.add(null);
+        }
+        catalystMarkers = emptyDraft(MAX_INPUT_SLOTS);
+        for (var catalyst : PatternVirtualInputHelper.getCatalysts(encodedPattern).entries()) {
+            var slot = catalyst.sourceSlot();
+            if (slot < 0 || slot >= encodedInputInv.size() || inputs.get(slot) != null) {
+                slot = firstEmptySlot(inputs);
+            }
+            if (slot != -1) {
+                inputs.set(slot, catalyst.stack());
+                catalystMarkers.set(slot, catalyst.stack());
+            }
+        }
+        inputs = new ArrayList<>(GTCEuPatternMetadataBridge.restoreVirtualCircuitInput(
                 encodedPattern,
-                pattern.getSparseInputs(),
-                encodedInputInv.size());
+                inputs,
+                encodedInputInv.size()));
+        for (int slot = 0; slot < inputs.size(); slot++) {
+            var input = inputs.get(slot);
+            if (GTCEuPatternMetadataBridge.getCircuitConfiguration(input).isPresent()) {
+                catalystMarkers.set(slot, input);
+                break;
+            }
+        }
         fillInventoryFromSparseStacks(encodedInputInv, inputs);
         fillInventoryFromSparseStacks(encodedOutputInv, pattern.getSparseOutputs());
     }
 
     private void loadSmithingTablePattern(AESmithingTablePattern pattern) {
+        clearCatalystMarkers();
         setMode(EncodingMode.SMITHING_TABLE);
         this.substitute = pattern.canSubstitute();
 
@@ -179,6 +208,7 @@ public class PatternEncodingLogic implements InternalInventoryHost {
     }
 
     private void loadStonecuttingPattern(AEStonecuttingPattern pattern) {
+        clearCatalystMarkers();
         setMode(EncodingMode.STONECUTTING);
         stonecuttingRecipeId = pattern.getRecipeId();
 
@@ -197,6 +227,61 @@ public class PatternEncodingLogic implements InternalInventoryHost {
             }
         } finally {
             inv.endBatch();
+        }
+    }
+
+    private static int firstEmptySlot(List<GenericStack> inputs) {
+        for (int i = 0; i < inputs.size(); i++) {
+            if (inputs.get(i) == null) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    public boolean toggleCatalyst(int slot) {
+        if (mode != EncodingMode.PROCESSING || slot < 0 || slot >= encodedInputInv.size()) {
+            return false;
+        }
+        var input = encodedInputInv.getStack(slot);
+        if (input == null) {
+            return false;
+        }
+
+        catalystMarkers.set(slot, catalystMarkers.get(slot) == null ? input : null);
+        saveChanges();
+        return true;
+    }
+
+    public boolean isCatalyst(int slot) {
+        return slot >= 0 && slot < catalystMarkers.size() && catalystMarkers.get(slot) != null;
+    }
+
+    public List<PatternCatalyst> getCatalysts() {
+        var catalysts = new ArrayList<PatternCatalyst>();
+        for (int slot = 0; slot < catalystMarkers.size(); slot++) {
+            if (!isCatalyst(slot)) {
+                continue;
+            }
+            var input = encodedInputInv.getStack(slot);
+            if (input != null) {
+                catalysts.add(new PatternCatalyst(slot, input));
+            }
+        }
+        return catalysts;
+    }
+
+    private void clearCatalystMarkers() {
+        catalystMarkers = emptyDraft(MAX_INPUT_SLOTS);
+    }
+
+    private void pruneCatalystMarkers() {
+        for (int slot = 0; slot < catalystMarkers.size(); slot++) {
+            var marker = catalystMarkers.get(slot);
+            var input = encodedInputInv.getStack(slot);
+            if (marker != null && (input == null || !marker.what().equals(input.what()))) {
+                catalystMarkers.set(slot, null);
+            }
         }
     }
 
@@ -326,6 +411,8 @@ public class PatternEncodingLogic implements InternalInventoryHost {
 
             encodedInputInv.readFromChildTag(data, "encodedInputs", registries);
             encodedOutputInv.readFromChildTag(data, "encodedOutputs", registries);
+            catalystMarkers = readDraft(data.getList(CATALYSTS_TAG, Tag.TAG_COMPOUND), MAX_INPUT_SLOTS, registries);
+            pruneCatalystMarkers();
 
             if (data.contains(MODE_DRAFTS_TAG, Tag.TAG_COMPOUND)) {
                 readModeDrafts(data.getCompound(MODE_DRAFTS_TAG), registries);
@@ -351,6 +438,7 @@ public class PatternEncodingLogic implements InternalInventoryHost {
         encodedPatternInv.writeToNBT(data, "encodedPattern", registries);
         encodedInputInv.writeToChildTag(data, "encodedInputs", registries);
         encodedOutputInv.writeToChildTag(data, "encodedOutputs", registries);
+        writeDraft(data, CATALYSTS_TAG, catalystMarkers, registries);
         writeModeDrafts(data, registries);
     }
 

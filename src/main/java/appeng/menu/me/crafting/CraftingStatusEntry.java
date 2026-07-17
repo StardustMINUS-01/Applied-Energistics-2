@@ -53,14 +53,21 @@ public class CraftingStatusEntry implements Comparable<CraftingStatusEntry> {
     private final long storedAmount;
     private final long activeAmount;
     private final long pendingAmount;
+    private final long forceStartAmount;
 
     public CraftingStatusEntry(long serial, @Nullable AEKey what, long storedAmount, long activeAmount,
             long pendingAmount) {
+        this(serial, what, storedAmount, activeAmount, pendingAmount, 0);
+    }
+
+    public CraftingStatusEntry(long serial, @Nullable AEKey what, long storedAmount, long activeAmount,
+            long pendingAmount, long forceStartAmount) {
         this.serial = serial;
         this.what = what;
         this.storedAmount = storedAmount;
         this.activeAmount = activeAmount;
         this.pendingAmount = pendingAmount;
+        this.forceStartAmount = forceStartAmount;
     }
 
     public long getSerial() {
@@ -79,6 +86,10 @@ public class CraftingStatusEntry implements Comparable<CraftingStatusEntry> {
         return pendingAmount;
     }
 
+    public long getForceStartAmount() {
+        return forceStartAmount;
+    }
+
     public AEKey getWhat() {
         return what;
     }
@@ -88,6 +99,7 @@ public class CraftingStatusEntry implements Comparable<CraftingStatusEntry> {
         buffer.writeVarLong(entry.activeAmount);
         buffer.writeVarLong(entry.storedAmount);
         buffer.writeVarLong(entry.pendingAmount);
+        buffer.writeVarLong(entry.forceStartAmount);
         AEKey.writeOptionalKey(buffer, entry.what);
     }
 
@@ -96,15 +108,16 @@ public class CraftingStatusEntry implements Comparable<CraftingStatusEntry> {
         long missingAmount = buffer.readVarLong();
         long storedAmount = buffer.readVarLong();
         long craftAmount = buffer.readVarLong();
+        long forceStartAmount = buffer.readVarLong();
         var what = AEKey.readOptionalKey(buffer);
-        return new CraftingStatusEntry(serial, what, storedAmount, missingAmount, craftAmount);
+        return new CraftingStatusEntry(serial, what, storedAmount, missingAmount, craftAmount, forceStartAmount);
     }
 
     /**
      * Indicates whether this entry is actually a deletion record.
      */
     public boolean isDeleted() {
-        return storedAmount == 0 && activeAmount == 0 && pendingAmount == 0;
+        return storedAmount == 0 && activeAmount == 0 && pendingAmount == 0 && forceStartAmount == 0;
     }
 
     @Override

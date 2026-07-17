@@ -37,6 +37,7 @@ import appeng.api.config.Settings;
 import appeng.api.networking.IGrid;
 import appeng.api.networking.IGridNode;
 import appeng.api.networking.crafting.CraftingJobStatus;
+import appeng.api.networking.crafting.CraftingStartMode;
 import appeng.api.networking.crafting.ICraftingCPU;
 import appeng.api.networking.crafting.ICraftingPlan;
 import appeng.api.networking.crafting.ICraftingRequester;
@@ -207,7 +208,12 @@ public final class CraftingCPUCluster implements IAECluster, ICraftingCPU {
 
     public ICraftingSubmitResult submitJob(IGrid g, ICraftingPlan plan, IActionSource src,
             ICraftingRequester requestingMachine) {
-        return craftingLogic.trySubmitJob(g, plan, src, requestingMachine);
+        return submitJob(g, plan, src, requestingMachine, CraftingStartMode.NORMAL);
+    }
+
+    public ICraftingSubmitResult submitJob(IGrid g, ICraftingPlan plan, IActionSource src,
+            ICraftingRequester requestingMachine, CraftingStartMode mode) {
+        return craftingLogic.trySubmitJob(g, plan, src, requestingMachine, mode);
     }
 
     @Override

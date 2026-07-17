@@ -35,6 +35,7 @@ import appeng.crafting.pattern.EncodedCraftingPattern;
 import appeng.crafting.pattern.EncodedProcessingPattern;
 import appeng.crafting.pattern.EncodedSmithingTablePattern;
 import appeng.crafting.pattern.EncodedStonecuttingPattern;
+import appeng.crafting.pattern.PatternVirtualInputs;
 import appeng.items.storage.SpatialPlotInfo;
 
 public final class AEComponents {
@@ -199,6 +200,14 @@ public final class AEComponents {
             "encoded_processing_pattern",
             builder -> builder.persistent(EncodedProcessingPattern.CODEC)
                     .networkSynchronized(EncodedProcessingPattern.STREAM_CODEC));
+
+    /**
+     * Inputs encoded as non-consumable pattern metadata rather than AE2 material requirements.
+     */
+    public static final DataComponentType<PatternVirtualInputs> PATTERN_VIRTUAL_INPUTS = register(
+            "pattern_virtual_inputs",
+            builder -> builder.persistent(PatternVirtualInputs.CODEC)
+                    .networkSynchronized(PatternVirtualInputs.STREAM_CODEC));
 
     /**
      * An encoded stonecutting pattern.

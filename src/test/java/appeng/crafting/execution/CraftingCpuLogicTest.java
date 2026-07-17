@@ -26,6 +26,8 @@ import appeng.api.config.PowerMultiplier;
 import appeng.api.crafting.IPatternDetails;
 import appeng.api.crafting.PatternDetailsHelper;
 import appeng.api.networking.IGrid;
+import appeng.api.networking.crafting.CalculationStrategy;
+import appeng.api.networking.crafting.CraftingStartMode;
 import appeng.api.networking.crafting.IBulkCraftingProvider;
 import appeng.api.networking.crafting.ICraftingProvider;
 import appeng.api.networking.energy.IEnergyService;
@@ -35,6 +37,7 @@ import appeng.api.stacks.GenericStack;
 import appeng.api.stacks.KeyCounter;
 import appeng.api.storage.MEStorage;
 import appeng.crafting.ledger.LedgerCraftingPlan;
+import appeng.crafting.ledger.LedgerCraftingPlanner;
 import appeng.crafting.ledger.PatternCraftingTask;
 import appeng.me.cluster.implementations.CraftingCPUCluster;
 import appeng.me.helpers.BaseActionSource;
@@ -64,6 +67,244 @@ class CraftingCpuLogicTest {
         assertThat(result.successful()).isTrue();
         assertThat(logic.hasJob()).isTrue();
         assertThat(logic.isLedgerJobActive()).isTrue();
+    }
+
+    @Test
+    void forceStartSubmitStartsJobAndTracksMissingInitialItems() {
+        var cluster = mock(CraftingCPUCluster.class);
+        when(cluster.isActive()).thenReturn(true);
+        when(cluster.getAvailableStorage()).thenReturn(1024L);
+        var grid = mock(IGrid.class);
+        var storageService = mock(IStorageService.class);
+        var storage = mock(MEStorage.class);
+        when(grid.getStorageService()).thenReturn(storageService);
+        when(storageService.getInventory()).thenReturn(storage);
+        var src = new BaseActionSource();
+        var input = new GenericStack(AEItemKey.of(Items.STONE), 10);
+        var output = new GenericStack(AEItemKey.of(Items.DIAMOND), 1);
+        when(storage.extract(eq(input.what()), eq(4L), eq(Actionable.MODULATE), eq(src))).thenReturn(4L);
+        var usedItems = new KeyCounter();
+        usedItems.add(input.what(), 4);
+        var missingItems = new KeyCounter();
+        missingItems.add(input.what(), 6);
+        var plan = new LedgerCraftingPlan(output, 64, true, false, usedItems, new KeyCounter(), missingItems,
+                Map.of(), List.of());
+        var logic = new CraftingCpuLogic(cluster);
+
+        var normalResult = logic.trySubmitJob(grid, plan, src, null);
+        assertThat(normalResult.successful()).isFalse();
+        assertThat(logic.hasJob()).isFalse();
+
+        var forceStartResult = logic.trySubmitJob(grid, plan, src, null, CraftingStartMode.FORCE_START);
+
+        assertThat(forceStartResult.successful()).isTrue();
+        assertThat(logic.hasJob()).isTrue();
+        assertThat(logic.getWaitingFor(input.what())).isEqualTo(6);
+
+        var allWaitingFor = new java.util.HashSet<appeng.api.stacks.AEKey>();
+        logic.getAllWaitingFor(allWaitingFor);
+        assertThat(allWaitingFor).contains(input.what());
+
+        var allItems = new KeyCounter();
+        logic.getAllItems(allItems);
+        assertThat(allItems.get(input.what())).isEqualTo(10);
+    }
+
+    @Test
+    void forceStartInsertConsumesDebtOnlyWhenModulating() {
+        var cluster = mock(CraftingCPUCluster.class);
+        when(cluster.isActive()).thenReturn(true);
+        when(cluster.getAvailableStorage()).thenReturn(1024L);
+        var grid = mock(IGrid.class);
+        var storageService = mock(IStorageService.class);
+        var storage = mock(MEStorage.class);
+        when(grid.getStorageService()).thenReturn(storageService);
+        when(storageService.getInventory()).thenReturn(storage);
+        var src = new BaseActionSource();
+        var input = new GenericStack(AEItemKey.of(Items.STONE), 10);
+        var output = new GenericStack(AEItemKey.of(Items.DIAMOND), 1);
+        when(storage.extract(eq(input.what()), eq(4L), eq(Actionable.MODULATE), eq(src))).thenReturn(4L);
+        var usedItems = new KeyCounter();
+        usedItems.add(input.what(), 4);
+        var missingItems = new KeyCounter();
+        missingItems.add(input.what(), 6);
+        var plan = new LedgerCraftingPlan(output, 64, true, false, usedItems, new KeyCounter(), missingItems,
+                Map.of(), List.of());
+        var logic = new CraftingCpuLogic(cluster);
+        assertThat(logic.trySubmitJob(grid, plan, src, null, CraftingStartMode.FORCE_START).successful()).isTrue();
+
+        assertThat(logic.insert(input.what(), 3, Actionable.SIMULATE)).isEqualTo(3);
+        assertThat(logic.getWaitingFor(input.what())).isEqualTo(6);
+        assertThat(logic.getStored(input.what())).isEqualTo(4);
+
+        assertThat(logic.insert(input.what(), 99, Actionable.MODULATE)).isEqualTo(6);
+
+        assertThat(logic.getWaitingFor(input.what())).isZero();
+        assertThat(logic.getStored(input.what())).isEqualTo(10);
+    }
+
+    @Test
+    void forceStartSupplyUnblocksLedgerTaskDispatch() {
+        var cluster = mock(CraftingCPUCluster.class);
+        when(cluster.isActive()).thenReturn(true);
+        when(cluster.getAvailableStorage()).thenReturn(1024L);
+        var grid = mock(IGrid.class);
+        var storageService = mock(IStorageService.class);
+        var storage = mock(MEStorage.class);
+        when(grid.getStorageService()).thenReturn(storageService);
+        when(storageService.getInventory()).thenReturn(storage);
+        var src = new BaseActionSource();
+        var input = new GenericStack(AEItemKey.of(Items.OAK_LOG), 5);
+        var output = new GenericStack(AEItemKey.of(Items.DIAMOND), 1);
+        when(storage.extract(eq(input.what()), eq(5L), eq(Actionable.MODULATE), eq(src))).thenReturn(0L);
+        var usedItems = new KeyCounter();
+        usedItems.add(input.what(), 5);
+        var missingItems = new KeyCounter();
+        missingItems.add(input.what(), 5);
+        var pattern = new appeng.crafting.simulation.helpers.ProcessingPatternBuilder(output)
+                .addPreciseInput(1, input)
+                .build();
+        var plan = new LedgerCraftingPlan(output, 64, true, false, usedItems, new KeyCounter(), missingItems,
+                Map.of(pattern, 1L), List.of(new PatternCraftingTask(pattern, 1)));
+        var logic = new CraftingCpuLogic(cluster);
+        assertThat(logic.trySubmitJob(grid, plan, src, null, CraftingStartMode.FORCE_START).successful()).isTrue();
+        var craftingService = mock(CraftingService.class);
+        var provider = mock(ICraftingProvider.class);
+        when(craftingService.getProviders(pattern)).thenReturn(List.of(provider));
+        when(provider.pushPattern(eq(pattern), org.mockito.ArgumentMatchers.any())).thenReturn(true);
+        var energy = mock(IEnergyService.class);
+        when(energy.extractAEPower(anyDouble(), eq(Actionable.SIMULATE), eq(PowerMultiplier.CONFIG)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+        when(energy.extractAEPower(anyDouble(), eq(Actionable.MODULATE), eq(PowerMultiplier.CONFIG)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        assertThat(logic.executeCrafting(1, craftingService, energy, mock(Level.class))).isZero();
+        assertThat(logic.getLedgerExecutionStats().inputUnavailableSkips()).isEqualTo(1);
+
+        assertThat(logic.insert(input.what(), 5, Actionable.MODULATE)).isEqualTo(5);
+
+        assertThat(logic.executeCrafting(1, craftingService, energy, mock(Level.class))).isEqualTo(1);
+        assertThat(logic.getWaitingFor(output.what())).isEqualTo(1);
+        assertThat(logic.getStored(input.what())).isZero();
+        verify(provider).pushPattern(eq(pattern), org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void forceStartPartialSupplyDoesNotDispatchUntilPatternInputIsComplete() {
+        var cluster = mock(CraftingCPUCluster.class);
+        when(cluster.isActive()).thenReturn(true);
+        when(cluster.getAvailableStorage()).thenReturn(1024L);
+        var grid = mock(IGrid.class);
+        var storageService = mock(IStorageService.class);
+        var storage = mock(MEStorage.class);
+        when(grid.getStorageService()).thenReturn(storageService);
+        when(storageService.getInventory()).thenReturn(storage);
+        var src = new BaseActionSource();
+        var input = new GenericStack(AEItemKey.of(Items.OAK_LOG), 10);
+        var output = new GenericStack(AEItemKey.of(Items.DIAMOND), 1);
+        when(storage.extract(eq(input.what()), eq(10L), eq(Actionable.MODULATE), eq(src))).thenReturn(0L);
+        var usedItems = new KeyCounter();
+        usedItems.add(input.what(), 10);
+        var missingItems = new KeyCounter();
+        missingItems.add(input.what(), 10);
+        var pattern = new appeng.crafting.simulation.helpers.ProcessingPatternBuilder(output)
+                .addPreciseInput(1, input)
+                .build();
+        var plan = new LedgerCraftingPlan(output, 64, true, false, usedItems, new KeyCounter(), missingItems,
+                Map.of(pattern, 1L), List.of(new PatternCraftingTask(pattern, 1)));
+        var logic = new CraftingCpuLogic(cluster);
+        assertThat(logic.trySubmitJob(grid, plan, src, null, CraftingStartMode.FORCE_START).successful()).isTrue();
+        var craftingService = mock(CraftingService.class);
+        var provider = mock(ICraftingProvider.class);
+        when(craftingService.getProviders(pattern)).thenReturn(List.of(provider));
+        when(provider.pushPattern(eq(pattern), org.mockito.ArgumentMatchers.any())).thenReturn(true);
+        var energy = mock(IEnergyService.class);
+        when(energy.extractAEPower(anyDouble(), eq(Actionable.SIMULATE), eq(PowerMultiplier.CONFIG)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+        when(energy.extractAEPower(anyDouble(), eq(Actionable.MODULATE), eq(PowerMultiplier.CONFIG)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        assertThat(logic.insert(input.what(), 5, Actionable.MODULATE)).isEqualTo(5);
+        assertThat(logic.executeCrafting(1, craftingService, energy, mock(Level.class))).isZero();
+        assertThat(logic.getStored(input.what())).isEqualTo(5);
+
+        assertThat(logic.insert(input.what(), 5, Actionable.MODULATE)).isEqualTo(5);
+        assertThat(logic.executeCrafting(1, craftingService, energy, mock(Level.class))).isEqualTo(1);
+        assertThat(logic.getStored(input.what())).isZero();
+        verify(provider).pushPattern(eq(pattern), org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void forceStartExecutesPlannerAttemptAfterAllMissingInputsAreSupplied() {
+        var cluster = mock(CraftingCPUCluster.class);
+        when(cluster.isActive()).thenReturn(true);
+        when(cluster.getAvailableStorage()).thenReturn(1024L);
+        var grid = mock(IGrid.class);
+        var storageService = mock(IStorageService.class);
+        var storage = mock(MEStorage.class);
+        when(grid.getStorageService()).thenReturn(storageService);
+        when(storageService.getInventory()).thenReturn(storage);
+        var src = new BaseActionSource();
+        var input = new GenericStack(AEItemKey.of(Items.OAK_LOG), 5);
+        var output = new GenericStack(AEItemKey.of(Items.OAK_PLANKS), 10);
+        var pattern = new appeng.crafting.simulation.helpers.ProcessingPatternBuilder(output)
+                .addPreciseInput(1, input)
+                .build();
+        var plan = new LedgerCraftingPlanner(new KeyCounter(), Map.of(output.what(), List.of(pattern)))
+                .plan(output, CalculationStrategy.REPORT_MISSING_ITEMS);
+        assertThat(plan.simulation()).isTrue();
+        assertThat(plan.missingItems().get(input.what())).isEqualTo(5);
+        var logic = new CraftingCpuLogic(cluster);
+        assertThat(logic.trySubmitJob(grid, plan, src, null, CraftingStartMode.FORCE_START).successful()).isTrue();
+        var craftingService = mock(CraftingService.class);
+        var provider = mock(ICraftingProvider.class);
+        when(craftingService.getProviders(pattern)).thenReturn(List.of(provider));
+        when(provider.pushPattern(eq(pattern), org.mockito.ArgumentMatchers.any())).thenReturn(true);
+        var energy = mock(IEnergyService.class);
+        when(energy.extractAEPower(anyDouble(), eq(Actionable.SIMULATE), eq(PowerMultiplier.CONFIG)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+        when(energy.extractAEPower(anyDouble(), eq(Actionable.MODULATE), eq(PowerMultiplier.CONFIG)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        assertThat(logic.insert(input.what(), 5, Actionable.MODULATE)).isEqualTo(5);
+
+        assertThat(logic.executeCrafting(1, craftingService, energy, mock(Level.class))).isEqualTo(1);
+        verify(provider).pushPattern(eq(pattern), org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void readsLegacyManualSupplyNbtAsForceStartDebt() {
+        var cluster = mock(CraftingCPUCluster.class);
+        when(cluster.isActive()).thenReturn(true);
+        when(cluster.getAvailableStorage()).thenReturn(1024L);
+        var grid = mock(IGrid.class);
+        var storageService = mock(IStorageService.class);
+        var storage = mock(MEStorage.class);
+        when(grid.getStorageService()).thenReturn(storageService);
+        when(storageService.getInventory()).thenReturn(storage);
+        var src = new BaseActionSource();
+        var input = new GenericStack(AEItemKey.of(Items.STONE), 10);
+        var output = new GenericStack(AEItemKey.of(Items.DIAMOND), 1);
+        when(storage.extract(eq(input.what()), eq(4L), eq(Actionable.MODULATE), eq(src))).thenReturn(4L);
+        var usedItems = new KeyCounter();
+        usedItems.add(input.what(), 4);
+        var missingItems = new KeyCounter();
+        missingItems.add(input.what(), 6);
+        var plan = new LedgerCraftingPlan(output, 64, true, false, usedItems, new KeyCounter(), missingItems,
+                Map.of(), List.of());
+        var logic = new CraftingCpuLogic(cluster);
+        assertThat(logic.trySubmitJob(grid, plan, src, null, CraftingStartMode.FORCE_START).successful()).isTrue();
+        var legacyTag = new CompoundTag();
+        logic.writeToNBT(legacyTag, registries);
+        legacyTag.put("manualSupply", legacyTag.get("forceStart"));
+        legacyTag.remove("forceStart");
+
+        var restored = new CraftingCpuLogic(cluster);
+        restored.readFromNBT(legacyTag, registries);
+
+        assertThat(restored.hasJob()).isTrue();
+        assertThat(restored.getWaitingFor(input.what())).isEqualTo(6);
+        assertThat(restored.getStored(input.what())).isEqualTo(4);
     }
 
     @Test

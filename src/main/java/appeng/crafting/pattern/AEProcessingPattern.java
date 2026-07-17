@@ -119,7 +119,7 @@ public class AEProcessingPattern implements IPatternDetails {
     public PatternDetailsTooltip getTooltip(Level level, TooltipFlag flags) {
         var tooltip = new PatternDetailsTooltip(PatternDetailsTooltip.OUTPUT_TEXT_PRODUCES);
         sparseInputs.stream().filter(Objects::nonNull).forEach(tooltip::addInput);
-        GTCEuPatternMetadataBridge.appendVirtualCircuitDisplayInput(definition.toStack(), tooltip);
+        appendVirtualInputTooltipProperties(definition.toStack(), tooltip);
         sparseOutputs.stream().filter(Objects::nonNull).forEach(tooltip::addOutput);
         return tooltip;
     }
@@ -164,11 +164,22 @@ public class AEProcessingPattern implements IPatternDetails {
         var encodedPattern = stack.get(AEComponents.ENCODED_PROCESSING_PATTERN);
         if (encodedPattern != null) {
             encodedPattern.sparseInputs().stream().filter(Objects::nonNull).forEach(tooltip::addInput);
-            GTCEuPatternMetadataBridge.appendVirtualCircuitDisplayInput(stack, tooltip);
+            appendVirtualInputTooltipProperties(stack, tooltip);
             encodedPattern.sparseOutputs().stream().filter(Objects::nonNull).forEach(tooltip::addOutput);
         }
 
         return tooltip;
+    }
+
+    private static void appendVirtualInputTooltipProperties(ItemStack encodedPattern, PatternDetailsTooltip tooltip) {
+        var virtualCircuit = GTCEuPatternMetadataBridge.getVirtualCircuitNamedDisplayInput(encodedPattern);
+        if (virtualCircuit != null) {
+            tooltip.addProperty(PatternVirtualInputHelper.makeCatalystTooltipLine(virtualCircuit));
+        }
+
+        for (var catalyst : PatternVirtualInputHelper.getCatalysts(encodedPattern).entries()) {
+            tooltip.addProperty(PatternVirtualInputHelper.makeCatalystTooltipLine(catalyst.stack()));
+        }
     }
 
     private static class Input implements IInput {

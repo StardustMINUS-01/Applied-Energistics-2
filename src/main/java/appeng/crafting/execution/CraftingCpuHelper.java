@@ -49,7 +49,17 @@ public class CraftingCpuHelper {
     @Nullable
     public static GenericStack tryExtractInitialItems(ICraftingPlan plan, IGrid grid,
             ListCraftingInventory cpuInventory, IActionSource src) {
+        var missing = tryExtractInitialItems(plan, grid, cpuInventory, src, false);
+        return missing == null || missing.isEmpty() ? null
+                : new GenericStack(missing.getFirstEntry().getKey(),
+                        missing.getFirstEntry().getLongValue());
+    }
+
+    @Nullable
+    public static KeyCounter tryExtractInitialItems(ICraftingPlan plan, IGrid grid,
+            ListCraftingInventory cpuInventory, IActionSource src, boolean allowMissing) {
         var storage = grid.getStorageService().getInventory();
+        KeyCounter missing = null;
 
         for (var entry : plan.usedItems()) {
             var what = entry.getKey();
@@ -58,6 +68,13 @@ public class CraftingCpuHelper {
             cpuInventory.insert(what, extracted, Actionable.MODULATE);
 
             if (extracted < toExtract) {
+                if (missing == null) {
+                    missing = new KeyCounter();
+                }
+                missing.add(what, toExtract - extracted);
+                if (allowMissing) {
+                    continue;
+                }
                 // Failed to extract everything, reinject and hope for the best.
                 // TODO: maybe voiding items that fail to re-insert is not the best thing to do?
                 for (var stored : cpuInventory.list) {
@@ -65,11 +82,11 @@ public class CraftingCpuHelper {
                 }
                 cpuInventory.clear();
 
-                return new GenericStack(what, toExtract - extracted);
+                return missing;
             }
         }
 
-        return null;
+        return missing;
     }
 
     public static CompoundTag generateLinkData(UUID craftId, boolean standalone, boolean req) {

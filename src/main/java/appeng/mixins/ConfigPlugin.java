@@ -29,6 +29,9 @@ public class ConfigPlugin implements IMixinConfigPlugin {
         if ("appeng.mixins.PonderWorldMixin".equals(mixinClassName)) {
             return isModLoaded("create");
         }
+        if (mixinClassName.startsWith("appeng.mixins.extendedae.")) {
+            return isModLoaded("extendedae");
+        }
         return true;
     }
 

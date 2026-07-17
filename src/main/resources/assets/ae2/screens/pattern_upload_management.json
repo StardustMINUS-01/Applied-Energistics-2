@@ -1,0 +1,54 @@
+{
+  "$schema": "schema.json",
+  "includes": ["common/common.json"],
+  "background": {
+    "texture": "guis/pattern_upload_management.png",
+    "textureWidth": 238,
+    "textureHeight": 248,
+    "srcRect": [0, 0, 238, 248]
+  },
+  "text": {
+    "dialog_title": {
+      "position": {
+        "left": 8,
+        "top": 7
+      }
+    }
+  },
+  "slots": {
+    "PLAYER_INVENTORY": {
+      "left": 10,
+      "top": 168,
+      "grid": "BREAK_AFTER_9COLS"
+    },
+    "PLAYER_HOTBAR": {
+      "left": 10,
+      "top": 222,
+      "grid": "HORIZONTAL"
+    },
+    "ENCODED_PATTERN": {
+      "left": 172,
+      "top": 222,
+      "grid": "HORIZONTAL"
+    }
+  },
+  "widgets": {
+    "search": {
+      "left": 50,
+      "top": 4,
+      "width": 74,
+      "height": 12
+    },
+    "scrollbar": {
+      "left": 218,
+      "top": 19,
+      "height": 140
+    },
+    "back": {
+      "left": 214,
+      "top": -5,
+      "width": 20,
+      "height": 20
+    }
+  }
+}

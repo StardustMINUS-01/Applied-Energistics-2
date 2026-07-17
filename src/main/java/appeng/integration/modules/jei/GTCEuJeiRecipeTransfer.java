@@ -82,7 +82,8 @@ final class GTCEuJeiRecipeTransfer<T extends PatternEncodingTermMenu> implements
                     menu,
                     inputs,
                     outputs,
-                    GTCEuPatternMetadataBridge.getVirtualCircuitFromRecipe(recipe));
+                    GTCEuPatternMetadataBridge.getVirtualCircuitFromRecipe(recipe),
+                    GTCEuPatternMetadataBridge.getNonConsumableInputsFromRecipe(recipe));
         }
 
         return null;

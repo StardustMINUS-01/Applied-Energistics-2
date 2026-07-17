@@ -12,6 +12,7 @@ import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.resources.ResourceLocation;
 
 import appeng.api.stacks.GenericStack;
+import appeng.crafting.pattern.PatternCatalyst;
 
 public record PatternEncodeRequest(
         ResourceLocation recipeTypeUid,
@@ -19,7 +20,9 @@ public record PatternEncodeRequest(
         PatternEncodeMode mode,
         List<@Nullable GenericStack> sparseInputs,
         List<@Nullable GenericStack> sparseOutputs,
-        @Nullable ResourceLocation vanillaRecipeId,
+        List<PatternCatalyst> catalysts,
+        List<@Nullable GenericStack> canonicalInputGuides,
+        @Nullable ResourceLocation canonicalRecipeId,
         boolean allowSubstitution,
         boolean allowFluidSubstitution) {
 
@@ -37,6 +40,8 @@ public record PatternEncodeRequest(
         Objects.requireNonNull(mode, "mode");
         sparseInputs = copySparseList(sparseInputs);
         sparseOutputs = copySparseList(sparseOutputs);
+        catalysts = copyCatalystList(catalysts);
+        canonicalInputGuides = copySparseList(canonicalInputGuides);
     }
 
     public static List<PatternEncodeRequest> readRequestList(RegistryFriendlyByteBuf buffer) {
@@ -69,7 +74,9 @@ public record PatternEncodeRequest(
         var mode = buffer.readEnum(PatternEncodeMode.class);
         var sparseInputs = readGenericStackList(buffer);
         var sparseOutputs = readGenericStackList(buffer);
-        var vanillaRecipeId = buffer.readBoolean() ? buffer.readResourceLocation() : null;
+        var catalysts = readCatalystList(buffer);
+        var canonicalInputGuides = readGenericStackList(buffer);
+        var canonicalRecipeId = buffer.readBoolean() ? buffer.readResourceLocation() : null;
         var allowSubstitution = buffer.readBoolean();
         var allowFluidSubstitution = buffer.readBoolean();
         return new PatternEncodeRequest(
@@ -78,7 +85,9 @@ public record PatternEncodeRequest(
                 mode,
                 sparseInputs,
                 sparseOutputs,
-                vanillaRecipeId,
+                catalysts,
+                canonicalInputGuides,
+                canonicalRecipeId,
                 allowSubstitution,
                 allowFluidSubstitution);
     }
@@ -89,9 +98,11 @@ public record PatternEncodeRequest(
         buffer.writeEnum(mode);
         writeGenericStackList(sparseInputs, buffer);
         writeGenericStackList(sparseOutputs, buffer);
-        buffer.writeBoolean(vanillaRecipeId != null);
-        if (vanillaRecipeId != null) {
-            buffer.writeResourceLocation(vanillaRecipeId);
+        writeCatalystList(catalysts, buffer);
+        writeGenericStackList(canonicalInputGuides, buffer);
+        buffer.writeBoolean(canonicalRecipeId != null);
+        if (canonicalRecipeId != null) {
+            buffer.writeResourceLocation(canonicalRecipeId);
         }
         buffer.writeBoolean(allowSubstitution);
         buffer.writeBoolean(allowFluidSubstitution);
@@ -123,5 +134,37 @@ public record PatternEncodeRequest(
 
     private static List<@Nullable GenericStack> copySparseList(List<@Nullable GenericStack> stacks) {
         return Collections.unmodifiableList(new ArrayList<>(stacks));
+    }
+
+    private static List<PatternCatalyst> readCatalystList(RegistryFriendlyByteBuf buffer) {
+        int size = buffer.readVarInt();
+        if (size < 0 || size > MAX_STACKS_PER_SIDE) {
+            throw new IllegalArgumentException("Invalid catalyst list size: " + size);
+        }
+
+        var catalysts = new ArrayList<PatternCatalyst>(size);
+        for (int i = 0; i < size; i++) {
+            catalysts.add(PatternCatalyst.STREAM_CODEC.decode(buffer));
+        }
+        return List.copyOf(catalysts);
+    }
+
+    private static void writeCatalystList(List<PatternCatalyst> catalysts, RegistryFriendlyByteBuf buffer) {
+        if (catalysts.size() > MAX_STACKS_PER_SIDE) {
+            throw new IllegalArgumentException("Too many catalysts: " + catalysts.size());
+        }
+
+        buffer.writeVarInt(catalysts.size());
+        for (var catalyst : catalysts) {
+            PatternCatalyst.STREAM_CODEC.encode(buffer, catalyst);
+        }
+    }
+
+    private static List<PatternCatalyst> copyCatalystList(List<PatternCatalyst> catalysts) {
+        Objects.requireNonNull(catalysts, "catalysts");
+        if (catalysts.size() > MAX_STACKS_PER_SIDE) {
+            throw new IllegalArgumentException("Too many catalysts: " + catalysts.size());
+        }
+        return List.copyOf(catalysts);
     }
 }

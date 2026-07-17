@@ -26,7 +26,9 @@ import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.Nullable;
 
 import net.minecraft.core.NonNullList;
+import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.inventory.MenuType;
 import net.minecraft.world.inventory.Slot;
@@ -48,11 +50,21 @@ import appeng.api.stacks.AEItemKey;
 import appeng.api.stacks.GenericStack;
 import appeng.client.gui.Icon;
 import appeng.client.gui.me.items.PatternEncodingTermScreen;
+import appeng.core.AEConfig;
 import appeng.core.definitions.AEItems;
+import appeng.core.localization.PlayerMessages;
 import appeng.crafting.pattern.AECraftingPattern;
 import appeng.crafting.pattern.AEProcessingPattern;
+import appeng.crafting.pattern.PatternVirtualInputHelper;
 import appeng.helpers.IPatternTerminalMenuHost;
-import appeng.integration.modules.gtceu.GTCEuPatternMetadataBridge;
+import appeng.helpers.patternprovider.upload.PatternUploadRecallHistory;
+import appeng.helpers.patternprovider.upload.PatternUploadRecallService;
+import appeng.helpers.patternprovider.upload.PatternUploadRecallStatus;
+import appeng.helpers.patternprovider.upload.PatternUploadResult;
+import appeng.helpers.patternprovider.upload.PatternUploadService;
+import appeng.helpers.patternprovider.upload.PatternUploadSource;
+import appeng.helpers.patternprovider.upload.PatternUploadStatus;
+import appeng.helpers.patternprovider.upload.PatternUploadTargetHint;
 import appeng.menu.SlotSemantics;
 import appeng.menu.guisync.GuiSync;
 import appeng.menu.implementations.MenuTypeBuilder;
@@ -63,6 +75,7 @@ import appeng.menu.slot.RestrictedInputSlot;
 import appeng.parts.encoding.EncodingMode;
 import appeng.parts.encoding.PatternEncodingLogic;
 import appeng.util.ConfigInventory;
+import appeng.util.inv.PlayerInternalInventory;
 
 /**
  * Can only be used with a host that implements {@link PatternEncodingLogic}.
@@ -77,8 +90,12 @@ public class PatternEncodingTermMenu extends MEStorageMenu {
 
     private static final String ACTION_SET_MODE = "setMode";
     private static final String ACTION_ENCODE = "encode";
+    private static final String ACTION_ENCODE_AND_UPLOAD = "encodeAndUpload";
+    private static final String ACTION_RECALL_UPLOADED_PATTERN = "recallUploadedPattern";
+    private static final String ACTION_OPEN_PATTERN_UPLOAD_MANAGEMENT = "openPatternUploadManagement";
     private static final String ACTION_CLEAR = "clear";
     private static final String ACTION_SET_SUBSTITUTION = "setSubstitution";
+    private static final String ACTION_TOGGLE_CATALYST = "toggleCatalyst";
     private static final String ACTION_SET_FLUID_SUBSTITUTION = "setFluidSubstitution";
     private static final String ACTION_SET_STONECUTTING_RECIPE_ID = "setStonecuttingRecipeId";
     private static final String ACTION_CYCLE_PROCESSING_OUTPUT = "cycleProcessingOutput";
@@ -117,6 +134,10 @@ public class PatternEncodingTermMenu extends MEStorageMenu {
     @GuiSync(94)
     @Nullable
     public ResourceLocation stonecuttingRecipeId;
+    @GuiSync(93)
+    public long catalystSlotsLow;
+    @GuiSync(92)
+    public long catalystSlotsHigh;
 
     private final List<RecipeHolder<StonecutterRecipe>> stonecuttingRecipes = new ArrayList<>();
 
@@ -187,11 +208,15 @@ public class PatternEncodingTermMenu extends MEStorageMenu {
         this.encodedPatternSlot.setStackLimit(1);
 
         registerClientAction(ACTION_ENCODE, this::encode);
+        registerClientAction(ACTION_ENCODE_AND_UPLOAD, this::encodeAndUpload);
+        registerClientAction(ACTION_RECALL_UPLOADED_PATTERN, this::recallLastUploadedPattern);
+        registerClientAction(ACTION_OPEN_PATTERN_UPLOAD_MANAGEMENT, this::openPatternUploadManagement);
         registerClientAction(ACTION_SET_STONECUTTING_RECIPE_ID, ResourceLocation.class,
                 encodingLogic::setStonecuttingRecipeId);
         registerClientAction(ACTION_CLEAR, this::clear);
         registerClientAction(ACTION_SET_MODE, EncodingMode.class, this::setMode);
         registerClientAction(ACTION_SET_SUBSTITUTION, Boolean.class, encodingLogic::setSubstitution);
+        registerClientAction(ACTION_TOGGLE_CATALYST, Integer.class, this::toggleCatalyst);
         registerClientAction(ACTION_SET_FLUID_SUBSTITUTION, Boolean.class, encodingLogic::setFluidSubstitution);
         registerClientAction(ACTION_CYCLE_PROCESSING_OUTPUT, this::cycleProcessingOutput);
         registerClientAction(ACTION_SCALE_PROCESSING_PATTERN, Integer.class, this::scaleProcessingPattern);
@@ -306,6 +331,112 @@ public class PatternEncodingTermMenu extends MEStorageMenu {
         }
     }
 
+    public void encodeAndUpload() {
+        if (isClientSide()) {
+            sendClientAction(ACTION_ENCODE_AND_UPLOAD);
+            return;
+        }
+
+        encode();
+
+        if (!(getPlayer() instanceof ServerPlayer serverPlayer)) {
+            return;
+        }
+
+        var result = PatternUploadService.uploadPattern(
+                serverPlayer,
+                this,
+                PatternUploadSource.singleSlot(encodingLogic.getEncodedPatternInv(), 0),
+                PatternUploadTargetHint.auto());
+
+        recordUploadedPattern(serverPlayer, result);
+
+        if (result.status() == PatternUploadStatus.MULTIPLE_TARGETS && getLocator() != null) {
+            PatternUploadSelectMenu.open(serverPlayer, getLocator());
+            return;
+        }
+
+        serverPlayer.displayClientMessage(uploadStatusMessage(result.status()), true);
+        broadcastChanges();
+    }
+
+    public void recallLastUploadedPattern() {
+        if (isClientSide()) {
+            sendClientAction(ACTION_RECALL_UPLOADED_PATTERN);
+            return;
+        }
+
+        if (!(getPlayer() instanceof ServerPlayer serverPlayer)) {
+            return;
+        }
+
+        var gridNode = getGridNode();
+        if (gridNode == null || !gridNode.isActive() || gridNode.getGrid() == null) {
+            serverPlayer.displayClientMessage(PlayerMessages.PatternUploadFailedNoGrid.text(), true);
+            return;
+        }
+
+        var result = PatternUploadRecallService.recallLastUploadedPattern(
+                serverPlayer.getUUID(),
+                gridNode.getGrid(),
+                encodingLogic.getEncodedPatternInv(),
+                new PlayerInternalInventory(serverPlayer.getInventory()),
+                PatternUploadRecallHistory.get(serverPlayer),
+                AEConfig.instance().getPatternUploadRecallHistoryLimit());
+
+        if (result.status() != PatternUploadRecallStatus.NO_RECALLABLE_PATTERN) {
+            serverPlayer.displayClientMessage(recallStatusMessage(result.status()), true);
+        }
+        if (result.status() == PatternUploadRecallStatus.RECALLED_TO_RESULT_SLOT
+                || result.status() == PatternUploadRecallStatus.RECALLED_TO_PLAYER_INVENTORY) {
+            broadcastChanges();
+        }
+    }
+
+    public void openPatternUploadManagement() {
+        if (isClientSide()) {
+            sendClientAction(ACTION_OPEN_PATTERN_UPLOAD_MANAGEMENT);
+            return;
+        }
+        if (getPlayer() instanceof ServerPlayer player && getLocator() != null) {
+            PatternUploadManagementMenu.open(player, getLocator());
+        }
+    }
+
+    public static Component recallStatusMessage(PatternUploadRecallStatus status) {
+        return switch (status) {
+            case RECALLED_TO_CURSOR -> PlayerMessages.PatternUploadRecallSucceededCursor.text();
+            case RECALLED_TO_RESULT_SLOT -> PlayerMessages.PatternUploadRecallSucceededResultSlot.text();
+            case RECALLED_TO_PLAYER_INVENTORY -> PlayerMessages.PatternUploadRecallSucceededInventory.text();
+            case NO_DESTINATION_SPACE -> PlayerMessages.PatternUploadRecallFailedNoSpace.text();
+            case INSERT_FAILED -> PlayerMessages.PatternUploadRecallFailedUnknown.text();
+            case NO_RECALLABLE_PATTERN -> Component.empty();
+        };
+    }
+
+    public static void recordUploadedPattern(ServerPlayer player, PatternUploadResult result) {
+        if (result.status() == PatternUploadStatus.UPLOADED) {
+            PatternUploadRecallHistory.get(player).recordUploadedPattern(
+                    player.getUUID(),
+                    result.uploadedGroupName(),
+                    result.uploadedPattern(),
+                    AEConfig.instance().getPatternUploadRecallHistoryLimit());
+        }
+    }
+
+    public static Component uploadStatusMessage(PatternUploadStatus status) {
+        return switch (status) {
+            case UPLOADED -> PlayerMessages.PatternUploadSucceeded.text();
+            case NO_GRID -> PlayerMessages.PatternUploadFailedNoGrid.text();
+            case NO_TARGET -> PlayerMessages.PatternUploadFailedNoTarget.text();
+            case TARGET_FULL -> PlayerMessages.PatternUploadFailedFull.text();
+            case MULTIPLE_TARGETS -> PlayerMessages.PatternUploadFailedMultipleTargets.text();
+            case INVALID_SOURCE, INVALID_PATTERN, INVALID_PATTERN_STACK_SIZE ->
+                PlayerMessages.PatternUploadFailedInvalidPattern.text();
+            case INSERT_FAILED -> PlayerMessages.PatternUploadFailedUnknown.text();
+        };
+    }
+
     /**
      * Clears the pattern in the encoded pattern slot.
      */
@@ -378,10 +509,10 @@ public class PatternEncodingTermMenu extends MEStorageMenu {
         }
 
         try {
-            return GTCEuPatternMetadataBridge.encodeProcessingPatternWithVirtualCircuitMetadata(
+            return PatternVirtualInputHelper.encodeProcessingPattern(
                     Arrays.asList(inputs),
                     Arrays.asList(outputs),
-                    java.util.OptionalInt.empty());
+                    encodingLogic.getCatalysts());
         } catch (IllegalArgumentException e) {
             return null;
         }
@@ -475,6 +606,17 @@ public class PatternEncodingTermMenu extends MEStorageMenu {
 
             this.substitute = encodingLogic.isSubstitution();
             this.substituteFluids = encodingLogic.isFluidSubstitution();
+            this.catalystSlotsLow = 0;
+            this.catalystSlotsHigh = 0;
+            for (int slot = 0; slot < AEProcessingPattern.MAX_INPUT_SLOTS; slot++) {
+                if (encodingLogic.isCatalyst(slot)) {
+                    if (slot < Long.SIZE) {
+                        catalystSlotsLow |= 1L << slot;
+                    } else {
+                        catalystSlotsHigh |= 1L << (slot - Long.SIZE);
+                    }
+                }
+            }
             this.stonecuttingRecipeId = encodingLogic.getStonecuttingRecipeId();
         }
     }
@@ -558,6 +700,30 @@ public class PatternEncodingTermMenu extends MEStorageMenu {
         if (ProcessingPatternScaler.scale(encodedInputsInv, encodedOutputsInv, factor)) {
             this.broadcastChanges();
         }
+    }
+
+    public void toggleCatalyst(int slot) {
+        if (isClientSide()) {
+            sendClientAction(ACTION_TOGGLE_CATALYST, slot);
+        } else if (encodingLogic.toggleCatalyst(slot)) {
+            broadcastChanges();
+        }
+    }
+
+    public boolean isCatalystSlot(Slot slot) {
+        var index = getProcessingInputSlotIndex(slot);
+        return index >= 0 && (index < Long.SIZE
+                ? (catalystSlotsLow & (1L << index)) != 0
+                : (catalystSlotsHigh & (1L << (index - Long.SIZE))) != 0);
+    }
+
+    public int getProcessingInputSlotIndex(Slot slot) {
+        for (int index = 0; index < processingInputSlots.length; index++) {
+            if (processingInputSlots[index] == slot) {
+                return index;
+            }
+        }
+        return -1;
     }
 
     public EncodingMode getMode() {

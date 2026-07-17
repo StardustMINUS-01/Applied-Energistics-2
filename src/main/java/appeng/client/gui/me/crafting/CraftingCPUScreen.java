@@ -175,7 +175,8 @@ public class CraftingCPUScreen<T extends CraftingCPUMenu> extends AEBaseScreen<T
                         existingEntry.getWhat(),
                         entry.getStoredAmount(),
                         entry.getActiveAmount(),
-                        entry.getPendingAmount()));
+                        entry.getPendingAmount(),
+                        entry.getForceStartAmount()));
             } else if (entry.getWhat() == null) {
                 LOG.warn("Received an updated crafting status entry {}, but no current entry exists. {}",
                         entry,

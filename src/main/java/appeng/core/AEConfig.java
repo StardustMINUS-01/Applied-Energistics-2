@@ -251,6 +251,10 @@ public final class AEConfig {
         return common.craftingCalculationTimePerTick.get();
     }
 
+    public int getPatternUploadRecallHistoryLimit() {
+        return common.patternUploadRecallHistoryLimit.get();
+    }
+
     public boolean isSpatialAnchorEnablesRandomTicks() {
         return common.spatialAnchorEnableRandomTicks.get();
     }
@@ -540,6 +544,7 @@ public final class AEConfig {
         // Misc
         public final IntValue formationPlaneEntityLimit;
         public final IntValue craftingCalculationTimePerTick;
+        public final IntValue patternUploadRecallHistoryLimit;
         public final BooleanValue debugTools;
         public final BooleanValue matterCannonBlockDamage;
         public final BooleanValue tinyTntBlockDamage;
@@ -623,6 +628,11 @@ public final class AEConfig {
 
             builder.push("craftingCPU");
             this.craftingCalculationTimePerTick = define(builder, "craftingCalculationTimePerTick", 5);
+            builder.pop();
+
+            builder.push("patternUpload");
+            this.patternUploadRecallHistoryLimit = define(builder, "recallHistoryLimit", 64, 0, 4096,
+                    "Maximum number of uploaded patterns remembered per player for pattern upload recall. Set to 0 to disable history.");
             builder.pop();
 
             builder.push("crafting");

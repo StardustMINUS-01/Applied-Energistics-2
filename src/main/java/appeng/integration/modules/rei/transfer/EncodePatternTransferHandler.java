@@ -72,10 +72,18 @@ public class EncodePatternTransferHandler<T extends PatternEncodingTermMenu> ext
                 if (virtualCircuit.isEmpty()) {
                     virtualCircuit = GTCEuPatternMetadataBridge.getVirtualCircuitFromRecipe(display);
                 }
+                var catalysts = GTCEuPatternMetadataBridge.getNonConsumableInputsFromRecipe(recipe);
+                if (catalysts.isEmpty()) {
+                    catalysts = GTCEuPatternMetadataBridge.getNonConsumableInputsFromRecipe(holder);
+                }
+                if (catalysts.isEmpty()) {
+                    catalysts = GTCEuPatternMetadataBridge.getNonConsumableInputsFromRecipe(display);
+                }
                 EncodingHelper.encodeProcessingRecipe(menu,
                         GenericEntryStackHelper.ofInputs(display),
                         GenericEntryStackHelper.ofOutputs(display),
-                        virtualCircuit);
+                        virtualCircuit,
+                        catalysts);
             }
         } else {
             var repo = menu.getClientRepo();

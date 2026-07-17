@@ -11,8 +11,14 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.crafting.CraftingInput;
 import net.minecraft.world.item.crafting.CraftingRecipe;
+import net.minecraft.world.item.crafting.Ingredient;
+import net.minecraft.world.item.crafting.Recipe;
 import net.minecraft.world.item.crafting.RecipeHolder;
 import net.minecraft.world.item.crafting.RecipeType;
+import net.minecraft.world.item.crafting.SingleRecipeInput;
+import net.minecraft.world.item.crafting.SmithingRecipe;
+import net.minecraft.world.item.crafting.SmithingRecipeInput;
+import net.minecraft.world.item.crafting.StonecutterRecipe;
 import net.minecraft.world.level.Level;
 
 import appeng.api.crafting.PatternDetailsHelper;
@@ -20,8 +26,10 @@ import appeng.api.stacks.AEItemKey;
 import appeng.api.stacks.AEKey;
 import appeng.api.stacks.GenericStack;
 import appeng.crafting.pattern.AEProcessingPattern;
+import appeng.crafting.pattern.PatternVirtualInputHelper;
 import appeng.integration.modules.gtceu.GTCEuPatternMetadataBridge;
 import appeng.menu.me.items.PatternEncodingTermMenu;
+import appeng.util.CraftingRecipeUtil;
 import appeng.util.inv.PlayerInternalInventory;
 
 public final class RecipeChainPatternEncodingService {
@@ -49,6 +57,7 @@ public final class RecipeChainPatternEncodingService {
             if (preparedEntry.status == PatternEncodeEntryStatus.SKIPPED_EXISTING_PRIMARY_OUTPUT) {
                 skippedExistingCount++;
             } else if (preparedEntry.status == PatternEncodeEntryStatus.SKIPPED_INVALID_RECIPE
+                    || preparedEntry.status == PatternEncodeEntryStatus.SKIPPED_INVALID_CATALYST
                     || preparedEntry.status == PatternEncodeEntryStatus.SKIPPED_INVALID_PATTERN) {
                 skippedInvalidCount++;
             }
@@ -112,6 +121,13 @@ public final class RecipeChainPatternEncodingService {
         var plannedPrimaryOutputs = new HashSet<AEKey>();
 
         for (var request : requests) {
+            var catalystValidationFailure = validateCatalysts(request);
+            if (catalystValidationFailure != null) {
+                preparedEntries.add(PreparedEntry.skipped(request, PatternEncodeEntryStatus.SKIPPED_INVALID_CATALYST,
+                        catalystValidationFailure));
+                continue;
+            }
+
             var encodedPattern = createEncodedPattern(player.level(), request);
             if (encodedPattern == null) {
                 preparedEntries.add(PreparedEntry.skipped(request, PatternEncodeEntryStatus.SKIPPED_INVALID_RECIPE,
@@ -167,10 +183,14 @@ public final class RecipeChainPatternEncodingService {
     @Nullable
     static ItemStack createEncodedPattern(Level level, PatternEncodeRequest request) {
         try {
+            if (request.mode() != PatternEncodeMode.PROCESSING && !request.catalysts().isEmpty()) {
+                return null;
+            }
             return switch (request.mode()) {
-                case PROCESSING -> createProcessingPattern(request);
+                case PROCESSING -> request.canonicalInputGuides().isEmpty() ? createProcessingPattern(request) : null;
                 case CRAFTING -> createCraftingPattern(level, request);
-                case STONECUTTING, SMITHING_TABLE -> null;
+                case STONECUTTING -> createStonecuttingPattern(level, request);
+                case SMITHING_TABLE -> createSmithingTablePattern(level, request);
             };
         } catch (IllegalArgumentException e) {
             return null;
@@ -181,6 +201,9 @@ public final class RecipeChainPatternEncodingService {
     static ItemStack createProcessingPattern(PatternEncodeRequest request) {
         var inputs = request.sparseInputs();
         var outputs = request.sparseOutputs();
+        if (validateCatalysts(request) != null) {
+            return null;
+        }
         if (inputs.size() > AEProcessingPattern.MAX_INPUT_SLOTS
                 || outputs.size() > AEProcessingPattern.MAX_OUTPUT_SLOTS) {
             return null;
@@ -198,7 +221,7 @@ public final class RecipeChainPatternEncodingService {
                 hasInput = true;
             }
         }
-        if (!hasInput) {
+        if (!hasInput || !hasRealProcessingInput(inputs, request)) {
             return null;
         }
 
@@ -209,60 +232,195 @@ public final class RecipeChainPatternEncodingService {
         }
 
         try {
-            return GTCEuPatternMetadataBridge.encodeProcessingPatternWithVirtualCircuitMetadata(
-                    inputs, outputs, java.util.OptionalInt.empty());
+            return PatternVirtualInputHelper.encodeProcessingPattern(inputs, outputs, request.catalysts());
         } catch (IllegalArgumentException e) {
             return null;
         }
     }
 
     @Nullable
+    static String validateCatalysts(PatternEncodeRequest request) {
+        if (request.mode() != PatternEncodeMode.PROCESSING) {
+            return request.catalysts().isEmpty() ? null : "Catalysts are only supported for processing patterns";
+        }
+        if (request.catalysts().isEmpty()) {
+            return null;
+        }
+
+        var catalystSlots = new HashSet<Integer>();
+        var inputs = request.sparseInputs();
+        for (var catalyst : request.catalysts()) {
+            var slot = catalyst.sourceSlot();
+            if (slot < 0 || slot >= inputs.size()) {
+                return "Catalyst source slot is out of range";
+            }
+            if (!catalystSlots.add(slot)) {
+                return "Catalyst source slots must be unique";
+            }
+            var input = inputs.get(slot);
+            if (input == null || !catalyst.stack().equals(input)) {
+                return "Catalyst must match its processing input";
+            }
+        }
+
+        return hasRealProcessingInput(inputs, request) ? null : "Processing pattern has no real input";
+    }
+
+    private static boolean hasRealProcessingInput(List<@Nullable GenericStack> inputs, PatternEncodeRequest request) {
+        var normalCatalystSlots = new HashSet<Integer>();
+        for (var catalyst : request.catalysts()) {
+            if (GTCEuPatternMetadataBridge.getCircuitConfiguration(catalyst.stack()).isEmpty()) {
+                normalCatalystSlots.add(catalyst.sourceSlot());
+            }
+        }
+
+        for (int slot = 0; slot < inputs.size(); slot++) {
+            var input = inputs.get(slot);
+            if (input != null && !normalCatalystSlots.contains(slot)
+                    && GTCEuPatternMetadataBridge.getCircuitConfiguration(input).isEmpty()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    @Nullable
     static ItemStack createCraftingPattern(Level level, PatternEncodeRequest request) {
-        if (request.vanillaRecipeId() == null || request.sparseInputs().size() > 9) {
+        var recipeHolder = getCanonicalRecipe(level, request, RecipeType.CRAFTING, CraftingRecipe.class);
+        if (recipeHolder == null) {
             return null;
         }
 
-        var recipeHolder = level.getRecipeManager().byKey(request.vanillaRecipeId()).orElse(null);
-        if (recipeHolder == null || recipeHolder.value().getType() != RecipeType.CRAFTING
-                || !(recipeHolder.value() instanceof CraftingRecipe craftingRecipe)) {
+        var ingredients = createCanonicalGuideItems(request,
+                CraftingRecipeUtil.ensure3by3CraftingMatrix(recipeHolder.value()));
+        if (ingredients == null) {
             return null;
         }
-
-        var ingredients = new ArrayList<ItemStack>(9);
-        var hasInput = false;
-        for (int i = 0; i < 9; i++) {
-            var input = i < request.sparseInputs().size() ? request.sparseInputs().get(i) : null;
-            if (input == null) {
-                ingredients.add(ItemStack.EMPTY);
-                continue;
-            }
-            if (!isValidStack(input) || !(input.what() instanceof AEItemKey itemKey)) {
-                return null;
-            }
-            ingredients.add(itemKey.toStack());
-            hasInput = true;
-        }
-        if (!hasInput) {
+        var craftingInput = CraftingInput.of(3, 3, List.of(ingredients));
+        if (!recipeHolder.value().matches(craftingInput, level)) {
             return null;
         }
-
-        var craftingInput = CraftingInput.of(3, 3, ingredients);
-        if (!craftingRecipe.matches(craftingInput, level)) {
-            return null;
-        }
-
-        var output = craftingRecipe.assemble(craftingInput, level.registryAccess());
+        var output = recipeHolder.value().assemble(craftingInput, level.registryAccess());
         if (output.isEmpty()) {
             return null;
         }
 
-        var typedRecipeHolder = new RecipeHolder<CraftingRecipe>(recipeHolder.id(), craftingRecipe);
         return PatternDetailsHelper.encodeCraftingPattern(
-                typedRecipeHolder,
-                ingredients.toArray(ItemStack[]::new),
+                recipeHolder,
+                ingredients,
                 output,
                 request.allowSubstitution(),
                 request.allowFluidSubstitution());
+    }
+
+    @Nullable
+    static ItemStack createStonecuttingPattern(Level level, PatternEncodeRequest request) {
+        var recipeHolder = getCanonicalRecipe(level, request, RecipeType.STONECUTTING, StonecutterRecipe.class);
+        if (recipeHolder == null) {
+            return null;
+        }
+        var ingredients = recipeHolder.value().getIngredients();
+        if (ingredients.size() != 1) {
+            return null;
+        }
+        var guidedInputs = createCanonicalGuideItems(request, ingredients);
+        if (guidedInputs == null) {
+            return null;
+        }
+        var input = guidedInputs[0];
+        var recipeInput = new SingleRecipeInput(input);
+        if (!recipeHolder.value().matches(recipeInput, level)) {
+            return null;
+        }
+        var output = recipeHolder.value().getResultItem(level.registryAccess());
+        if (output.isEmpty()) {
+            return null;
+        }
+        return PatternDetailsHelper.encodeStonecuttingPattern(
+                recipeHolder,
+                AEItemKey.of(input),
+                AEItemKey.of(output),
+                request.allowSubstitution());
+    }
+
+    @Nullable
+    static ItemStack createSmithingTablePattern(Level level, PatternEncodeRequest request) {
+        var recipeHolder = getCanonicalRecipe(level, request, RecipeType.SMITHING, SmithingRecipe.class);
+        if (recipeHolder == null) {
+            return null;
+        }
+        var expectedIngredients = CraftingRecipeUtil.getIngredients(recipeHolder.value());
+        if (expectedIngredients.size() != 3) {
+            return null;
+        }
+        var guidedInputs = createCanonicalGuideItems(request, expectedIngredients);
+        if (guidedInputs == null) {
+            return null;
+        }
+        var template = guidedInputs[0];
+        var base = guidedInputs[1];
+        var addition = guidedInputs[2];
+        var recipeInput = new SmithingRecipeInput(template, base, addition);
+        if (!recipeHolder.value().matches(recipeInput, level)) {
+            return null;
+        }
+        var output = recipeHolder.value().assemble(recipeInput, level.registryAccess());
+        if (output.isEmpty()) {
+            return null;
+        }
+        return PatternDetailsHelper.encodeSmithingTablePattern(
+                recipeHolder,
+                AEItemKey.of(template),
+                AEItemKey.of(base),
+                AEItemKey.of(addition),
+                AEItemKey.of(output),
+                request.allowSubstitution());
+    }
+
+    @Nullable
+    private static <T extends Recipe<?>> RecipeHolder<T> getCanonicalRecipe(
+            Level level,
+            PatternEncodeRequest request,
+            RecipeType<T> recipeType,
+            Class<T> recipeClass) {
+        if (request.canonicalRecipeId() == null) {
+            return null;
+        }
+        var recipeHolder = level.getRecipeManager().byKey(request.canonicalRecipeId()).orElse(null);
+        if (recipeHolder == null || recipeHolder.value().getType() != recipeType
+                || !recipeClass.isInstance(recipeHolder.value())) {
+            return null;
+        }
+        return new RecipeHolder<>(recipeHolder.id(), recipeClass.cast(recipeHolder.value()));
+    }
+
+    @Nullable
+    private static ItemStack[] createCanonicalGuideItems(PatternEncodeRequest request, List<Ingredient> ingredients) {
+        var guides = request.canonicalInputGuides();
+        if (guides.size() != ingredients.size()) {
+            return null;
+        }
+        var items = new ItemStack[ingredients.size()];
+        for (int index = 0; index < ingredients.size(); index++) {
+            var ingredient = ingredients.get(index);
+            var guide = guides.get(index);
+            if (ingredient.isEmpty()) {
+                if (guide != null) {
+                    return null;
+                }
+                items[index] = ItemStack.EMPTY;
+                continue;
+            }
+            if (guide == null || guide.amount() != 1 || !(guide.what() instanceof AEItemKey itemKey)) {
+                return null;
+            }
+            ItemStack item = itemKey.toStack();
+            if (!ingredient.test(item)) {
+                return null;
+            }
+            items[index] = item;
+        }
+        return items;
     }
 
     static boolean hasPatternWithPrimaryOutput(ServerPlayer player, GenericStack primaryOutput) {

@@ -27,6 +27,12 @@ final class JeiStackHelper {
                 .toList();
     }
 
+    static List<List<GenericStack>> ofCraftingInputs(IRecipeSlotsView recipeSlots) {
+        return recipeSlots.getSlotViews(RecipeIngredientRole.INPUT).stream()
+                .map(JeiStackHelper::ofSlot)
+                .toList();
+    }
+
     static List<GenericStack> ofOutputs(IRecipeSlotsView recipeSlots) {
         return recipeSlots.getSlotViews(RecipeIngredientRole.OUTPUT).stream()
                 .map(JeiStackHelper::firstStackOfSlot)

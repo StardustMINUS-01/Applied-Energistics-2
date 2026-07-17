@@ -9,12 +9,14 @@ import java.util.OptionalInt;
 
 import org.jetbrains.annotations.Nullable;
 
+import net.minecraft.core.component.DataComponents;
 import net.minecraft.world.item.ItemStack;
+import net.neoforged.neoforge.fluids.FluidStack;
 
 import appeng.api.crafting.PatternDetailsHelper;
-import appeng.api.crafting.PatternDetailsTooltip;
 import appeng.api.stacks.AEItemKey;
 import appeng.api.stacks.GenericStack;
+import appeng.core.localization.GuiText;
 
 public final class GTCEuPatternMetadataBridge {
     private static final String GT_RECIPE_CLASS = "com.gregtechceu.gtceu.api.recipe.GTRecipe";
@@ -22,6 +24,8 @@ public final class GTCEuPatternMetadataBridge {
     private static final String VIRTUAL_CIRCUIT_CLASS = "com.gregtechceu.gtceu.integration.ae2.pattern.GTPatternVirtualCircuit";
     private static final String VIRTUAL_CIRCUIT_DISPLAY_CLASS = "com.gregtechceu.gtceu.integration.ae2.pattern.GTPatternVirtualCircuitDisplay";
     private static final String INT_CIRCUIT_CLASS = "com.gregtechceu.gtceu.common.item.behavior.IntCircuitBehaviour";
+    private static final String ITEM_RECIPE_CAPABILITY_CLASS = "com.gregtechceu.gtceu.api.capability.recipe.ItemRecipeCapability";
+    private static final String FLUID_RECIPE_CAPABILITY_CLASS = "com.gregtechceu.gtceu.api.capability.recipe.FluidRecipeCapability";
 
     private GTCEuPatternMetadataBridge() {
     }
@@ -40,6 +44,10 @@ public final class GTCEuPatternMetadataBridge {
         return getVirtualCircuitFromRecipe(recipeLike, 0);
     }
 
+    public static List<GenericStack> getNonConsumableInputsFromRecipe(@Nullable Object recipeLike) {
+        return getNonConsumableInputsFromRecipe(recipeLike, 0);
+    }
+
     public static OptionalInt getVirtualCircuitFromEncodedPattern(ItemStack encodedPattern) {
         var read = staticMethod(VIRTUAL_CIRCUIT_CLASS, "read", ItemStack.class);
         if (read == null) {
@@ -54,13 +62,6 @@ public final class GTCEuPatternMetadataBridge {
         var writeInPlace = staticMethod(VIRTUAL_CIRCUIT_CLASS, "writeInPlace", ItemStack.class, OptionalInt.class);
         if (writeInPlace != null) {
             invoke(writeInPlace, encodedPattern, circuit);
-        }
-    }
-
-    public static void appendVirtualCircuitDisplayInput(ItemStack encodedPattern, PatternDetailsTooltip tooltip) {
-        var displayInput = getVirtualCircuitDisplayInput(encodedPattern);
-        if (displayInput != null) {
-            tooltip.addInput(displayInput);
         }
     }
 
@@ -108,26 +109,15 @@ public final class GTCEuPatternMetadataBridge {
         return null;
     }
 
-    public static List<List<GenericStack>> appendVirtualCircuitIngredient(
-            List<List<GenericStack>> genericIngredients,
-            OptionalInt virtualCircuit) {
-        if (virtualCircuit.isEmpty()) {
-            return genericIngredients;
-        }
-        if (containsCircuitIngredient(genericIngredients)) {
-            return genericIngredients;
+    @Nullable
+    public static GenericStack getVirtualCircuitNamedDisplayInput(ItemStack encodedPattern) {
+        var circuit = getVirtualCircuitFromEncodedPattern(encodedPattern);
+        if (circuit.isEmpty()) {
+            return null;
         }
 
-        var displayStack = getVirtualCircuitDisplayStack(virtualCircuit.getAsInt());
-        var displayGenericStack = displayStack != null ? GenericStack.fromItemStack(displayStack) : null;
-        if (displayGenericStack == null) {
-            return genericIngredients;
-        }
-
-        var result = new ArrayList<List<GenericStack>>(genericIngredients.size() + 1);
-        result.addAll(genericIngredients);
-        result.add(List.of(displayGenericStack));
-        return result;
+        var displayStack = getVirtualCircuitDisplayStack(circuit.getAsInt());
+        return displayStack != null ? GenericStack.fromItemStack(displayStack) : null;
     }
 
     @Nullable
@@ -139,9 +129,16 @@ public final class GTCEuPatternMetadataBridge {
 
         var displayStack = invoke(toDisplayStack, circuit);
         if (displayStack instanceof ItemStack itemStack && !itemStack.isEmpty()) {
-            return itemStack;
+            return withVirtualCircuitDisplayName(itemStack, circuit);
         }
         return null;
+    }
+
+    private static ItemStack withVirtualCircuitDisplayName(ItemStack displayStack, int circuit) {
+        var namedDisplayStack = displayStack.copy();
+        namedDisplayStack.set(DataComponents.CUSTOM_NAME,
+                GuiText.PatternVirtualCircuit.text(namedDisplayStack.getHoverName(), circuit));
+        return namedDisplayStack;
     }
 
     private static VirtualCircuitExtraction extractVirtualCircuit(List<GenericStack> sparseInputs,
@@ -164,17 +161,6 @@ public final class GTCEuPatternMetadataBridge {
         }
 
         return new VirtualCircuitExtraction(Collections.unmodifiableList(inputs), foundCircuit);
-    }
-
-    private static boolean containsCircuitIngredient(List<List<GenericStack>> genericIngredients) {
-        for (var ingredient : genericIngredients) {
-            for (var stack : ingredient) {
-                if (getCircuitConfiguration(stack).isPresent()) {
-                    return true;
-                }
-            }
-        }
-        return false;
     }
 
     private static boolean containsCircuitInput(List<GenericStack> sparseInputs) {
@@ -248,6 +234,86 @@ public final class GTCEuPatternMetadataBridge {
         }
 
         return OptionalInt.empty();
+    }
+
+    private static List<GenericStack> getNonConsumableInputsFromRecipe(@Nullable Object recipeLike, int depth) {
+        if (recipeLike == null || depth > 4) {
+            return List.of();
+        }
+
+        var gtRecipeClass = classOrNull(GT_RECIPE_CLASS);
+        if (gtRecipeClass != null && gtRecipeClass.isInstance(recipeLike)) {
+            var inputs = readField(recipeLike, "inputs");
+            if (!(inputs instanceof java.util.Map<?, ?> inputCapabilities)) {
+                return List.of();
+            }
+
+            var result = new ArrayList<GenericStack>();
+            for (var inputCapability : inputCapabilities.entrySet()) {
+                var isItemCapability = isInstanceOf(inputCapability.getKey(), ITEM_RECIPE_CAPABILITY_CLASS);
+                var isFluidCapability = isInstanceOf(inputCapability.getKey(), FLUID_RECIPE_CAPABILITY_CLASS);
+                if (!isItemCapability && !isFluidCapability) {
+                    continue;
+                }
+
+                var contents = inputCapability.getValue();
+                if (!(contents instanceof Iterable<?> entries)) {
+                    continue;
+                }
+                for (var entry : entries) {
+                    var chance = readField(entry, "chance");
+                    if (!(chance instanceof Integer value) || value != 0) {
+                        continue;
+                    }
+                    var ingredient = readField(entry, "content");
+                    var genericStack = isItemCapability
+                            ? getSingleItemInput(ingredient)
+                            : getSingleFluidInput(ingredient);
+                    if (genericStack != null) {
+                        result.add(genericStack);
+                    }
+                }
+            }
+            return result;
+        }
+
+        for (var methodName : List.of("gtceu$getRecipe", "getRecipe", "recipe", "value")) {
+            var result = getNonConsumableInputsFromRecipe(invokeNoArg(recipeLike, methodName), depth + 1);
+            if (!result.isEmpty()) {
+                return result;
+            }
+        }
+        return List.of();
+    }
+
+    @Nullable
+    private static GenericStack getSingleItemInput(@Nullable Object ingredient) {
+        var candidates = invokeNoArg(ingredient, "getItems");
+        if (!(candidates instanceof ItemStack[])) {
+            candidates = invokeNoArg(invokeNoArg(ingredient, "ingredient"), "getItems");
+        }
+        if (!(candidates instanceof ItemStack[] stacks) || stacks.length != 1 || stacks[0].isEmpty()) {
+            return null;
+        }
+
+        var amount = invokeNoArg(ingredient, "amount");
+        var displayStack = amount instanceof Integer count ? stacks[0].copyWithCount(count) : stacks[0];
+        return GenericStack.fromItemStack(displayStack);
+    }
+
+    @Nullable
+    private static GenericStack getSingleFluidInput(@Nullable Object ingredient) {
+        var candidates = invokeNoArg(ingredient, "getFluids");
+        if (!(candidates instanceof FluidStack[] stacks) || stacks.length != 1 || stacks[0].isEmpty()) {
+            return null;
+        }
+
+        return GenericStack.fromFluidStack(stacks[0]);
+    }
+
+    private static boolean isInstanceOf(@Nullable Object value, String className) {
+        var clazz = classOrNull(className);
+        return clazz != null && clazz.isInstance(value);
     }
 
     @Nullable

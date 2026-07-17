@@ -5,11 +5,9 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.OptionalInt;
+import java.util.function.BiPredicate;
 import java.util.function.Predicate;
-
-import com.google.common.math.LongMath;
 
 import org.apache.commons.lang3.tuple.Pair;
 import org.jetbrains.annotations.Nullable;
@@ -58,41 +56,160 @@ public final class EncodingHelper {
 
     public static void encodeProcessingRecipe(PatternEncodingTermMenu menu, List<List<GenericStack>> genericIngredients,
             List<GenericStack> genericResults, OptionalInt virtualCircuit) {
+        encodeProcessingRecipe(menu, genericIngredients, genericResults, virtualCircuit, List.of());
+    }
+
+    public static void encodeProcessingRecipe(PatternEncodingTermMenu menu, List<List<GenericStack>> genericIngredients,
+            List<GenericStack> genericResults, OptionalInt virtualCircuit, List<GenericStack> catalysts) {
         menu.setMode(EncodingMode.PROCESSING);
-        var ingredients = GTCEuPatternMetadataBridge.appendVirtualCircuitIngredient(genericIngredients,
-                virtualCircuit);
+        var ingredients = createProcessingIngredients(genericIngredients, virtualCircuit, catalysts);
 
         // Note that this runs on the client and getClientRepo() is guaranteed to be available there.
         var ingredientPriorities = getIngredientPriorities(menu, ENTRY_COMPARATOR);
 
-        encodeBestMatchingStacksIntoSlots(
+        var encodedInputs = encodeProcessingInputsIntoSlots(
                 ingredients,
                 ingredientPriorities,
                 menu.getProcessingInputSlots());
-        encodeBestMatchingStacksIntoSlots(
+        encodeStacksIntoSlots(
                 // For the outputs, it's only one possible item per slot
                 genericResults.stream().map(List::of).toList(),
                 ingredientPriorities,
                 menu.getProcessingOutputSlots());
+
+        for (int slot = 0; slot < encodedInputs.size(); slot++) {
+            if (encodedInputs.get(slot).role().usesVirtualInputMetadata()) {
+                menu.toggleCatalyst(slot);
+            }
+        }
     }
 
-    private static void encodeBestMatchingStacksIntoSlots(List<List<GenericStack>> possibleInputsBySlot,
+    private static List<SelectedProcessingInput> encodeProcessingInputsIntoSlots(
+            List<ProcessingIngredient> ingredients,
             Map<AEKey, Integer> ingredientPriorities,
             FakeSlot[] slots) {
-        var encodedInputs = new ArrayList<GenericStack>();
-        for (var genericIngredient : possibleInputsBySlot) {
-            if (!genericIngredient.isEmpty()) {
-                addOrMerge(encodedInputs, findBestIngredient(ingredientPriorities, genericIngredient));
+        var selectedStacks = selectStacksPreservingSlots(
+                ingredients.stream().map(ProcessingIngredient::candidates).toList(), ingredientPriorities);
+        var encodedInputs = new ArrayList<SelectedProcessingInput>(selectedStacks.size());
+        for (int slot = 0; slot < selectedStacks.size(); slot++) {
+            var selectedStack = selectedStacks.get(slot);
+            encodedInputs.add(
+                    new SelectedProcessingInput(selectedStack,
+                            selectedStack != null ? ingredients.get(slot).role() : ProcessingInputRole.NORMAL));
+        }
+
+        for (int slot = 0; slot < slots.length; slot++) {
+            var selected = slot < encodedInputs.size() ? encodedInputs.get(slot) : null;
+            var stack = selected != null && selected.stack() != null ? GenericStack.wrapInItemStack(selected.stack())
+                    : ItemStack.EMPTY;
+            sendFilter(slots[slot], stack);
+        }
+        return encodedInputs;
+    }
+
+    private static void encodeStacksIntoSlots(List<List<GenericStack>> candidatesBySlot,
+            Map<AEKey, Integer> ingredientPriorities,
+            FakeSlot[] slots) {
+        var selectedStacks = selectStacksPreservingSlots(candidatesBySlot, ingredientPriorities);
+        for (int slot = 0; slot < slots.length; slot++) {
+            var selectedStack = slot < selectedStacks.size() ? selectedStacks.get(slot) : null;
+            var stack = selectedStack != null ? GenericStack.wrapInItemStack(selectedStack) : ItemStack.EMPTY;
+            sendFilter(slots[slot], stack);
+        }
+    }
+
+    static List<@Nullable GenericStack> selectStacksPreservingSlots(List<List<GenericStack>> candidatesBySlot,
+            Map<AEKey, Integer> ingredientPriorities) {
+        var selectedStacks = new ArrayList<@Nullable GenericStack>(candidatesBySlot.size());
+        for (var candidates : candidatesBySlot) {
+            selectedStacks.add(candidates.isEmpty() ? null : findBestIngredient(ingredientPriorities, candidates));
+        }
+        return selectedStacks;
+    }
+
+    private static List<ProcessingIngredient> createProcessingIngredients(List<List<GenericStack>> genericIngredients,
+            OptionalInt virtualCircuit, List<GenericStack> catalysts) {
+        return createProcessingIngredients(
+                genericIngredients,
+                virtualCircuit,
+                catalysts,
+                (stack, circuit) -> GTCEuPatternMetadataBridge.getCircuitConfiguration(stack).orElse(-1) == circuit);
+    }
+
+    static List<ProcessingIngredient> createProcessingIngredients(List<List<GenericStack>> genericIngredients,
+            OptionalInt virtualCircuit, List<GenericStack> catalysts,
+            BiPredicate<GenericStack, Integer> isVirtualCircuit) {
+        var ingredients = new ArrayList<ProcessingIngredient>(genericIngredients.size() + catalysts.size() + 1);
+        for (var candidates : genericIngredients) {
+            ingredients.add(new ProcessingIngredient(List.copyOf(candidates), ProcessingInputRole.NORMAL));
+        }
+
+        for (var catalyst : catalysts) {
+            if (virtualCircuit.isEmpty() || !isVirtualCircuit.test(catalyst, virtualCircuit.getAsInt())) {
+                markExistingOrAppendCatalyst(ingredients, catalyst);
             }
         }
 
-        for (int i = 0; i < slots.length; i++) {
-            var slot = slots[i];
-            var stack = (i < encodedInputs.size()) ? GenericStack.wrapInItemStack(encodedInputs.get(i))
-                    : ItemStack.EMPTY;
-            ServerboundPacket message = new InventoryActionPacket(
-                    InventoryAction.SET_FILTER, slot.index, stack);
-            PacketDistributor.sendToServer(message);
+        if (virtualCircuit.isPresent()) {
+            markExistingOrAppendVirtualCircuit(ingredients, virtualCircuit.getAsInt(), isVirtualCircuit);
+        }
+
+        return ingredients;
+    }
+
+    private static void markExistingOrAppendCatalyst(List<ProcessingIngredient> ingredients, GenericStack catalyst) {
+        for (int slot = 0; slot < ingredients.size(); slot++) {
+            var ingredient = ingredients.get(slot);
+            if (ingredient.role() == ProcessingInputRole.NORMAL
+                    && ingredient.candidates().stream().anyMatch(catalyst::equals)) {
+                ingredients.set(slot, new ProcessingIngredient(List.of(catalyst), ProcessingInputRole.CATALYST));
+                return;
+            }
+        }
+
+        ingredients.add(new ProcessingIngredient(List.of(catalyst), ProcessingInputRole.CATALYST));
+    }
+
+    private static void markExistingOrAppendVirtualCircuit(List<ProcessingIngredient> ingredients, int circuit,
+            BiPredicate<GenericStack, Integer> isVirtualCircuit) {
+        for (int slot = 0; slot < ingredients.size(); slot++) {
+            var ingredient = ingredients.get(slot);
+            for (var candidate : ingredient.candidates()) {
+                if (isVirtualCircuit.test(candidate, circuit)) {
+                    ingredients.set(slot,
+                            new ProcessingIngredient(List.of(candidate), ProcessingInputRole.VIRTUAL_CIRCUIT));
+                    return;
+                }
+            }
+        }
+
+        var displayStack = GTCEuPatternMetadataBridge.getVirtualCircuitDisplayStack(circuit);
+        if (displayStack != null) {
+            var genericStack = GenericStack.fromItemStack(displayStack);
+            if (genericStack != null) {
+                ingredients.add(new ProcessingIngredient(List.of(genericStack), ProcessingInputRole.VIRTUAL_CIRCUIT));
+            }
+        }
+    }
+
+    private static void sendFilter(FakeSlot slot, ItemStack stack) {
+        ServerboundPacket message = new InventoryActionPacket(InventoryAction.SET_FILTER, slot.index, stack);
+        PacketDistributor.sendToServer(message);
+    }
+
+    private record ProcessingIngredient(List<GenericStack> candidates, ProcessingInputRole role) {
+    }
+
+    private record SelectedProcessingInput(@Nullable GenericStack stack, ProcessingInputRole role) {
+    }
+
+    private enum ProcessingInputRole {
+        NORMAL,
+        CATALYST,
+        VIRTUAL_CIRCUIT;
+
+        boolean usesVirtualInputMetadata() {
+            return this != NORMAL;
         }
     }
 
@@ -135,6 +252,12 @@ public final class EncodingHelper {
                 var ingredient = ingredients3x3.get(slot);
                 if (ingredient.isEmpty()) {
                     continue; // Skip empty slots
+                }
+
+                var guidedIngredient = getGuidedIngredient(genericIngredients, slot, ingredient);
+                if (guidedIngredient != null) {
+                    encodedInputs.set(slot, guidedIngredient);
+                    continue;
                 }
 
                 // Due to how some crafting recipes work, the ingredient can match more than just one item in the
@@ -192,6 +315,20 @@ public final class EncodingHelper {
 
     }
 
+    @Nullable
+    private static ItemStack getGuidedIngredient(List<List<GenericStack>> genericIngredients, int slot,
+            net.minecraft.world.item.crafting.Ingredient ingredient) {
+        if (slot >= genericIngredients.size()) {
+            return null;
+        }
+        var candidates = genericIngredients.get(slot);
+        if (candidates.size() != 1 || !(candidates.getFirst().what() instanceof AEItemKey itemKey)) {
+            return null;
+        }
+        var guide = itemKey.toStack();
+        return itemKey.matches(ingredient) ? guide : null;
+    }
+
     // Given a set of possible ingredients, find the one that has the highest priority
     private static GenericStack findBestIngredient(Map<AEKey, Integer> ingredientPriorities,
             List<GenericStack> possibleIngredients) {
@@ -200,29 +337,6 @@ public final class EncodingHelper {
                 .max(Comparator.comparingInt(Pair::getRight))
                 .map(Pair::getLeft)
                 .orElseThrow();
-    }
-
-    /**
-     * In processing mode it makes sense to merge stacks of the same type together.
-     */
-    private static void addOrMerge(List<GenericStack> stacks, GenericStack newStack) {
-        for (int i = 0; i < stacks.size(); i++) {
-            var existingStack = stacks.get(i);
-            if (Objects.equals(existingStack.what(), newStack.what())) {
-                // Add the new amount onto the existing amount
-                long newAmount = LongMath.saturatedAdd(existingStack.amount(), newStack.amount());
-                stacks.set(i, new GenericStack(newStack.what(), newAmount));
-
-                // Determine if the addition overflowed. If it did, add the remainder as a new stack.
-                long overflow = newStack.amount() - (newAmount - existingStack.amount());
-                if (overflow > 0) {
-                    stacks.add(new GenericStack(newStack.what(), overflow));
-                }
-                return;
-            }
-        }
-
-        stacks.add(newStack);
     }
 
     /**

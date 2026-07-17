@@ -20,6 +20,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
+import net.minecraft.core.NonNullList;
 import net.minecraft.core.RegistryAccess;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.ResourceLocation;
@@ -30,15 +31,23 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.crafting.CraftingInput;
 import net.minecraft.world.item.crafting.CraftingRecipe;
+import net.minecraft.world.item.crafting.Ingredient;
 import net.minecraft.world.item.crafting.RecipeHolder;
 import net.minecraft.world.item.crafting.RecipeManager;
 import net.minecraft.world.item.crafting.RecipeType;
+import net.minecraft.world.item.crafting.SingleRecipeInput;
+import net.minecraft.world.item.crafting.SmithingRecipe;
+import net.minecraft.world.item.crafting.SmithingRecipeInput;
+import net.minecraft.world.item.crafting.StonecutterRecipe;
 import net.minecraft.world.level.Level;
 
 import appeng.api.crafting.PatternDetailsHelper;
+import appeng.api.ids.AEComponents;
 import appeng.api.stacks.GenericStack;
 import appeng.core.definitions.AEItems;
 import appeng.crafting.pattern.AEProcessingPattern;
+import appeng.crafting.pattern.PatternCatalyst;
+import appeng.crafting.pattern.PatternVirtualInputHelper;
 import appeng.integration.modules.gtceu.GTCEuPatternMetadataBridge;
 import appeng.menu.me.items.PatternEncodingTermMenu;
 import appeng.util.BootstrapMinecraft;
@@ -231,6 +240,8 @@ class RecipeChainPatternEncodingServiceTest {
                 PatternEncodeMode.PROCESSING,
                 List.of(realInput, circuitInput),
                 List.of(output),
+                List.of(new PatternCatalyst(1, circuitInput)),
+                List.of(),
                 null,
                 false,
                 false);
@@ -241,10 +252,149 @@ class RecipeChainPatternEncodingServiceTest {
         assertEquals(24, GTCEuPatternMetadataBridge.getVirtualCircuitFromEncodedPattern(encoded).orElseThrow());
         assertEquals(1, decoded.getInputs().length);
         assertEquals(realInput, decoded.getInputs()[0].getPossibleInputs()[0]);
+        assertTrue(PatternVirtualInputHelper.getCatalysts(encoded).entries().isEmpty());
     }
 
     @Test
-    void createsCraftingPatternFromServerRecipeId() {
+    void processingRequestStoresCatalystsOutsidePlannerInputs() {
+        var realInput = GenericStack.fromItemStack(new ItemStack(Items.IRON_INGOT));
+        var catalyst = GenericStack.fromItemStack(new ItemStack(Items.GOLD_INGOT, 64));
+        var output = GenericStack.fromItemStack(new ItemStack(Items.IRON_BLOCK));
+        var request = new PatternEncodeRequest(
+                ResourceLocation.fromNamespaceAndPath("jei", "processing"),
+                ResourceLocation.fromNamespaceAndPath("test", "catalyst"),
+                PatternEncodeMode.PROCESSING,
+                List.of(realInput, catalyst),
+                List.of(output),
+                List.of(new PatternCatalyst(1, catalyst)),
+                List.of(),
+                null,
+                false,
+                false);
+
+        var encoded = RecipeChainPatternEncodingService.createProcessingPattern(request);
+        var decoded = (AEProcessingPattern) PatternDetailsHelper.decodePattern(encoded, level);
+
+        assertEquals(1, decoded.getInputs().length);
+        assertEquals(realInput, decoded.getInputs()[0].getPossibleInputs()[0]);
+        assertEquals(List.of(new PatternCatalyst(1, catalyst)),
+                PatternVirtualInputHelper.getCatalysts(encoded).entries());
+    }
+
+    @Test
+    void processingRequestSeparatesCircuitMetadataFromMultipleCatalysts() {
+        var realInput = GenericStack.fromItemStack(new ItemStack(Items.IRON_INGOT));
+        var firstCatalyst = GenericStack.fromItemStack(new ItemStack(Items.GOLD_INGOT, 64));
+        var secondCatalyst = GenericStack.fromItemStack(new ItemStack(Items.DIAMOND, 3));
+        var circuit = GenericStack.fromItemStack(IntCircuitBehaviour.stack(24));
+        var output = GenericStack.fromItemStack(new ItemStack(Items.IRON_BLOCK));
+        var request = new PatternEncodeRequest(
+                ResourceLocation.fromNamespaceAndPath("jei", "processing"),
+                ResourceLocation.fromNamespaceAndPath("test", "multiple_catalysts_and_circuit"),
+                PatternEncodeMode.PROCESSING,
+                List.of(realInput, firstCatalyst, secondCatalyst, circuit),
+                List.of(output),
+                List.of(
+                        new PatternCatalyst(1, firstCatalyst),
+                        new PatternCatalyst(2, secondCatalyst),
+                        new PatternCatalyst(3, circuit)),
+                List.of(),
+                null,
+                false,
+                false);
+
+        var encoded = RecipeChainPatternEncodingService.createProcessingPattern(request);
+        var decoded = (AEProcessingPattern) PatternDetailsHelper.decodePattern(encoded, level);
+
+        assertEquals(24, GTCEuPatternMetadataBridge.getVirtualCircuitFromEncodedPattern(encoded).orElseThrow());
+        assertEquals(1, decoded.getInputs().length);
+        assertEquals(realInput, decoded.getInputs()[0].getPossibleInputs()[0]);
+        assertEquals(List.of(
+                new PatternCatalyst(1, firstCatalyst),
+                new PatternCatalyst(2, secondCatalyst)),
+                PatternVirtualInputHelper.getCatalysts(encoded).entries());
+    }
+
+    @Test
+    void skipsInvalidCatalystAndContinuesWithLaterRequests() {
+        setTerminalBlankPatterns(1);
+        var input = GenericStack.fromItemStack(new ItemStack(Items.IRON_INGOT));
+        var invalid = new PatternEncodeRequest(
+                ResourceLocation.fromNamespaceAndPath("jei", "processing"),
+                ResourceLocation.fromNamespaceAndPath("test", "invalid_catalyst"),
+                PatternEncodeMode.PROCESSING,
+                List.of(input),
+                List.of(GenericStack.fromItemStack(new ItemStack(Items.IRON_BLOCK))),
+                List.of(new PatternCatalyst(1, input)),
+                List.of(),
+                null,
+                false,
+                false);
+
+        var result = RecipeChainPatternEncodingService.encodeRecipeChainPatterns(player, menu,
+                List.of(invalid, validRequest(1)));
+
+        assertEquals(1, result.encodedCount());
+        assertEquals(1, result.skippedInvalidCount());
+        assertEquals(PatternEncodeEntryStatus.SKIPPED_INVALID_CATALYST, result.entries().get(0).status());
+        assertEquals(PatternEncodeEntryStatus.ENCODED, result.entries().get(1).status());
+    }
+
+    @Test
+    void rejectsProcessingRequestWithOnlyCatalystInputs() {
+        var catalyst = GenericStack.fromItemStack(new ItemStack(Items.GOLD_INGOT, 64));
+        var request = new PatternEncodeRequest(
+                ResourceLocation.fromNamespaceAndPath("jei", "processing"),
+                ResourceLocation.fromNamespaceAndPath("test", "only_catalyst"),
+                PatternEncodeMode.PROCESSING,
+                List.of(catalyst),
+                List.of(GenericStack.fromItemStack(new ItemStack(Items.IRON_BLOCK))),
+                List.of(new PatternCatalyst(0, catalyst)),
+                List.of(),
+                null,
+                false,
+                false);
+
+        assertNull(RecipeChainPatternEncodingService.createProcessingPattern(request));
+    }
+
+    @Test
+    void rejectsDuplicateAndMismatchedCatalystSlots() {
+        var realInput = GenericStack.fromItemStack(new ItemStack(Items.IRON_INGOT));
+        var catalyst = GenericStack.fromItemStack(new ItemStack(Items.GOLD_INGOT, 64));
+        var inputs = List.of(realInput, catalyst);
+        var output = List.of(GenericStack.fromItemStack(new ItemStack(Items.IRON_BLOCK)));
+        var duplicate = new PatternEncodeRequest(
+                ResourceLocation.fromNamespaceAndPath("jei", "processing"),
+                ResourceLocation.fromNamespaceAndPath("test", "duplicate_catalyst"),
+                PatternEncodeMode.PROCESSING,
+                inputs,
+                output,
+                List.of(new PatternCatalyst(1, catalyst), new PatternCatalyst(1, catalyst)),
+                List.of(),
+                null,
+                false,
+                false);
+        var mismatched = new PatternEncodeRequest(
+                ResourceLocation.fromNamespaceAndPath("jei", "processing"),
+                ResourceLocation.fromNamespaceAndPath("test", "mismatched_catalyst"),
+                PatternEncodeMode.PROCESSING,
+                inputs,
+                output,
+                List.of(new PatternCatalyst(1, realInput)),
+                List.of(),
+                null,
+                false,
+                false);
+
+        assertEquals("Catalyst source slots must be unique",
+                RecipeChainPatternEncodingService.validateCatalysts(duplicate));
+        assertEquals("Catalyst must match its processing input",
+                RecipeChainPatternEncodingService.validateCatalysts(mismatched));
+    }
+
+    @Test
+    void createsCraftingPatternFromCanonicalGuide() {
         var recipeManager = mock(RecipeManager.class);
         var recipe = mock(CraftingRecipe.class);
         var recipeId = ResourceLocation.fromNamespaceAndPath("minecraft", "oak_planks");
@@ -253,9 +403,11 @@ class RecipeChainPatternEncodingServiceTest {
         when(level.registryAccess()).thenReturn(RegistryAccess.fromRegistryOfRegistries(BuiltInRegistries.REGISTRY));
         when(recipeManager.byKey(recipeId)).thenReturn(Optional.of(recipeHolder));
         doReturn(RecipeType.CRAFTING).when(recipe).getType();
+        when(recipe.getIngredients()).thenReturn(NonNullList.of(
+                Ingredient.EMPTY,
+                Ingredient.of(Items.COBBLESTONE, Items.COBBLED_DEEPSLATE)));
         when(recipe.matches(org.mockito.ArgumentMatchers.any(CraftingInput.class),
-                org.mockito.ArgumentMatchers.eq(level)))
-                .thenReturn(true);
+                org.mockito.ArgumentMatchers.eq(level))).thenReturn(true);
         when(recipe.assemble(org.mockito.ArgumentMatchers.any(CraftingInput.class),
                 org.mockito.ArgumentMatchers.any())).thenReturn(new ItemStack(Items.OAK_PLANKS, 4));
 
@@ -263,13 +415,93 @@ class RecipeChainPatternEncodingServiceTest {
                 ResourceLocation.fromNamespaceAndPath("minecraft", "crafting"),
                 ResourceLocation.fromNamespaceAndPath("minecraft", "oak_planks"),
                 PatternEncodeMode.CRAFTING,
-                List.of(GenericStack.fromItemStack(new ItemStack(Items.OAK_LOG))),
                 List.of(),
+                List.of(),
+                List.of(),
+                java.util.Arrays.asList(
+                        GenericStack.fromItemStack(new ItemStack(Items.COBBLED_DEEPSLATE)),
+                        null, null, null, null, null, null, null, null),
                 recipeId,
                 true,
                 true);
 
         var encoded = RecipeChainPatternEncodingService.createCraftingPattern(level, request);
+
+        assertNotNull(encoded);
+        assertTrue(PatternDetailsHelper.isEncodedPattern(encoded));
+        assertEquals(Items.COBBLED_DEEPSLATE,
+                encoded.get(AEComponents.ENCODED_CRAFTING_PATTERN).inputs().getFirst().getItem());
+    }
+
+    @Test
+    void createsStonecuttingPatternFromServerRecipeIdWithoutClientSlots() {
+        var recipeManager = mock(RecipeManager.class);
+        var recipe = mock(StonecutterRecipe.class);
+        var recipeId = ResourceLocation.fromNamespaceAndPath("minecraft", "stone_slab");
+        var recipeHolder = new RecipeHolder<>(recipeId, recipe);
+        when(level.getRecipeManager()).thenReturn(recipeManager);
+        when(level.registryAccess()).thenReturn(RegistryAccess.fromRegistryOfRegistries(BuiltInRegistries.REGISTRY));
+        when(recipeManager.byKey(recipeId)).thenReturn(Optional.of(recipeHolder));
+        doReturn(RecipeType.STONECUTTING).when(recipe).getType();
+        when(recipe.getIngredients()).thenReturn(NonNullList.of(Ingredient.EMPTY, Ingredient.of(Items.STONE)));
+        when(recipe.matches(org.mockito.ArgumentMatchers.any(SingleRecipeInput.class),
+                org.mockito.ArgumentMatchers.eq(level))).thenReturn(true);
+        when(recipe.getResultItem(org.mockito.ArgumentMatchers.any())).thenReturn(new ItemStack(Items.STONE_SLAB, 2));
+
+        var request = new PatternEncodeRequest(
+                ResourceLocation.fromNamespaceAndPath("minecraft", "stonecutting"),
+                recipeId,
+                PatternEncodeMode.STONECUTTING,
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(GenericStack.fromItemStack(new ItemStack(Items.STONE))),
+                recipeId,
+                false,
+                false);
+
+        var encoded = RecipeChainPatternEncodingService.createEncodedPattern(level, request);
+
+        assertNotNull(encoded);
+        assertTrue(PatternDetailsHelper.isEncodedPattern(encoded));
+    }
+
+    @Test
+    void createsSmithingPatternFromServerRecipeIdWithoutClientSlots() {
+        var recipeManager = mock(RecipeManager.class);
+        var recipe = mock(SmithingRecipe.class);
+        var recipeId = ResourceLocation.fromNamespaceAndPath("minecraft", "netherite_sword_smithing");
+        var recipeHolder = new RecipeHolder<>(recipeId, recipe);
+        when(level.getRecipeManager()).thenReturn(recipeManager);
+        when(level.registryAccess()).thenReturn(RegistryAccess.fromRegistryOfRegistries(BuiltInRegistries.REGISTRY));
+        when(recipeManager.byKey(recipeId)).thenReturn(Optional.of(recipeHolder));
+        doReturn(RecipeType.SMITHING).when(recipe).getType();
+        when(recipe.getIngredients()).thenReturn(NonNullList.of(
+                Ingredient.EMPTY,
+                Ingredient.of(Items.NETHERITE_UPGRADE_SMITHING_TEMPLATE),
+                Ingredient.of(Items.DIAMOND_SWORD),
+                Ingredient.of(Items.NETHERITE_INGOT)));
+        when(recipe.matches(org.mockito.ArgumentMatchers.any(SmithingRecipeInput.class),
+                org.mockito.ArgumentMatchers.eq(level))).thenReturn(true);
+        when(recipe.assemble(org.mockito.ArgumentMatchers.any(SmithingRecipeInput.class),
+                org.mockito.ArgumentMatchers.any())).thenReturn(new ItemStack(Items.NETHERITE_SWORD));
+
+        var request = new PatternEncodeRequest(
+                ResourceLocation.fromNamespaceAndPath("minecraft", "smithing"),
+                recipeId,
+                PatternEncodeMode.SMITHING_TABLE,
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(
+                        GenericStack.fromItemStack(new ItemStack(Items.NETHERITE_UPGRADE_SMITHING_TEMPLATE)),
+                        GenericStack.fromItemStack(new ItemStack(Items.DIAMOND_SWORD)),
+                        GenericStack.fromItemStack(new ItemStack(Items.NETHERITE_INGOT))),
+                recipeId,
+                false,
+                false);
+
+        var encoded = RecipeChainPatternEncodingService.createEncodedPattern(level, request);
 
         assertNotNull(encoded);
         assertTrue(PatternDetailsHelper.isEncodedPattern(encoded));
@@ -292,6 +524,8 @@ class RecipeChainPatternEncodingServiceTest {
                 PatternEncodeMode.PROCESSING,
                 List.of(GenericStack.fromItemStack(new ItemStack(input))),
                 List.of(GenericStack.fromItemStack(new ItemStack(output))),
+                List.of(),
+                List.of(),
                 null,
                 false,
                 false);
@@ -303,6 +537,8 @@ class RecipeChainPatternEncodingServiceTest {
                 ResourceLocation.fromNamespaceAndPath("test", "invalid"),
                 PatternEncodeMode.PROCESSING,
                 List.of(GenericStack.fromItemStack(new ItemStack(Items.STICK))),
+                List.of(),
+                List.of(),
                 List.of(),
                 null,
                 false,

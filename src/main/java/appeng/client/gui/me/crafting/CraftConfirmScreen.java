@@ -24,9 +24,12 @@ import org.lwjgl.glfw.GLFW;
 
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.components.Tooltip;
+import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.entity.player.Inventory;
 
+import appeng.api.networking.crafting.CraftingStartMode;
 import appeng.client.gui.AEBaseScreen;
 import appeng.client.gui.StackWithBounds;
 import appeng.client.gui.style.ScreenStyle;
@@ -76,9 +79,17 @@ public class CraftConfirmScreen extends AEBaseScreen<CraftConfirmMenu> {
         this.selectCPU.setMessage(getNextCpuButtonLabel());
 
         CraftingPlanSummary plan = menu.getPlan();
-        boolean planIsStartable = plan != null && !plan.isSimulation();
+        boolean forceStart = plan != null && plan.isSimulation() && Screen.hasShiftDown();
+        boolean planIsStartable = plan != null && (!plan.isSimulation() || forceStart);
         this.start.active = !this.menu.hasNoCPU() && planIsStartable;
         this.selectCPU.active = planIsStartable;
+        if (forceStart) {
+            this.start.setMessage(GuiText.ForceStart.text());
+            this.start.setTooltip(Tooltip.create(GuiText.ForceStartDesc.text()));
+        } else {
+            this.start.setMessage(GuiText.Start.text());
+            this.start.setTooltip(null);
+        }
 
         // Show additional status about the selected CPU and plan when the planning is done
         Component planDetails = GuiText.CalculatingWait.text();
@@ -87,7 +98,7 @@ public class CraftConfirmScreen extends AEBaseScreen<CraftConfirmMenu> {
             String byteUsed = NumberFormat.getInstance().format(plan.getUsedBytes());
             planDetails = GuiText.BytesUsed.text(byteUsed);
 
-            if (plan.isSimulation()) {
+            if (shouldShowPartialPlanStatus(plan.isSimulation(), forceStart)) {
                 cpuDetails = GuiText.PartialPlan.text();
             } else if (this.menu.getCpuAvailableBytes() > 0) {
                 cpuDetails = GuiText.ConfirmCraftCpuStatus.text(
@@ -103,6 +114,10 @@ public class CraftConfirmScreen extends AEBaseScreen<CraftConfirmMenu> {
 
         final int size = plan != null ? plan.getEntries().size() : 0;
         scrollbar.setRange(0, this.table.getScrollableRows(size), 1);
+    }
+
+    static boolean shouldShowPartialPlanStatus(boolean simulation, boolean forceStart) {
+        return simulation && !forceStart;
     }
 
     private Component getNextCpuButtonLabel() {
@@ -156,7 +171,12 @@ public class CraftConfirmScreen extends AEBaseScreen<CraftConfirmMenu> {
     }
 
     private void start() {
-        getMenu().startJob();
+        var plan = getMenu().getPlan();
+        if (plan != null && plan.isSimulation() && Screen.hasShiftDown()) {
+            getMenu().startJob(CraftingStartMode.FORCE_START);
+        } else {
+            getMenu().startJob();
+        }
     }
 
 }

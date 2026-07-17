@@ -111,6 +111,8 @@ dependencies {
     testImplementation("com.google.guava:guava-testlib:21.0")
     testImplementation("org.mockito:mockito-junit-jupiter:5.12.0")
     testImplementation("net.neoforged:testframework:${project.neoforge_version}")
+    testImplementation "mezz.jei:jei-1.21.1-common-api:${jei_version}"
+    testImplementation "mezz.jei:jei-1.21.1-neoforge-api:${jei_version}"
 }
 
 test {

@@ -19,7 +19,9 @@ import org.mockito.MockedStatic;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
+import net.minecraft.ChatFormatting;
 import net.minecraft.core.RegistryAccess;
+import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.chat.Component;
@@ -130,7 +132,7 @@ class AEProcessingPatternTest {
     }
 
     @Test
-    void virtualCircuitInputBecomesDisplayOnlyMetadata() {
+    void virtualCircuitInputBecomesGreenCatalystTooltipProperty() {
         var realInput = GenericStack.fromItemStack(new ItemStack(Items.DIAMOND));
         var circuitInput = GenericStack.fromItemStack(IntCircuitBehaviour.stack(7));
         var output = GenericStack.fromItemStack(new ItemStack(Items.STICK));
@@ -146,8 +148,73 @@ class AEProcessingPatternTest {
                 .hasValue(7);
         assertThat(decoded.getInputs()).hasSize(1);
         assertThat(decoded.getInputs()[0].getPossibleInputs()[0]).isEqualTo(realInput);
-        assertThat(decoded.getTooltip(mock(Level.class), TooltipFlag.NORMAL).getInputs())
-                .containsExactly(realInput, circuitInput);
+        var tooltip = decoded.getTooltip(mock(Level.class), TooltipFlag.NORMAL);
+        assertThat(tooltip.getInputs()).containsExactly(realInput);
+        assertThat(tooltip.getProperties()).singleElement().satisfies(property -> {
+            assertThat(property.name().getString()).isEqualTo("Catalyst: 1 x Redstone Comparator (Circuit 7)");
+            assertThat(property.value()).isNull();
+            assertThat(property.name().getStyle().getColor().getValue()).isEqualTo(ChatFormatting.GREEN.getColor());
+        });
+    }
+
+    @Test
+    void virtualCircuitDisplayStackHasCircuitSpecificName() {
+        var displayStack = GTCEuPatternMetadataBridge.getVirtualCircuitDisplayStack(3);
+
+        assertThat(displayStack).isNotNull();
+        assertThat(displayStack.get(DataComponents.CUSTOM_NAME)).isNotNull();
+        assertThat(displayStack.getHoverName().getString()).isEqualTo("Redstone Comparator (Circuit 3)");
+    }
+
+    @Test
+    void virtualCircuitTooltipListsCircuitAsCatalyst() {
+        var encoded = GTCEuPatternMetadataBridge.encodeProcessingPatternWithVirtualCircuitMetadata(
+                List.of(
+                        GenericStack.fromItemStack(new ItemStack(Items.DIAMOND)),
+                        GenericStack.fromItemStack(IntCircuitBehaviour.stack(3))),
+                List.of(GenericStack.fromItemStack(new ItemStack(Items.STICK))),
+                java.util.OptionalInt.empty());
+
+        var lines = new ArrayList<Component>();
+        encoded.getItem().appendHoverText(encoded, Item.TooltipContext.EMPTY, lines, TooltipFlag.NORMAL);
+
+        assertThat(lines.stream().map(Component::getString))
+                .contains("Catalyst: 1 x Redstone Comparator (Circuit 3)");
+    }
+
+    @Test
+    void markedCatalystsAreStoredOutsideRealProcessingInputsWithoutNormalizingAmounts() {
+        var realInput = GenericStack.fromItemStack(new ItemStack(Items.DIAMOND, 16));
+        var firstCatalyst = GenericStack.fromItemStack(new ItemStack(Items.IRON_INGOT, 64));
+        var secondCatalyst = GenericStack.fromItemStack(new ItemStack(Items.GOLD_INGOT, 3));
+        var output = GenericStack.fromItemStack(new ItemStack(Items.STICK));
+
+        var encoded = PatternVirtualInputHelper.encodeProcessingPattern(
+                List.of(realInput, firstCatalyst, secondCatalyst),
+                List.of(output),
+                List.of(new PatternCatalyst(1, firstCatalyst), new PatternCatalyst(2, secondCatalyst)));
+        var decoded = assertInstanceOf(AEProcessingPattern.class,
+                PatternDetailsHelper.decodePattern(encoded, mock(Level.class)));
+
+        assertThat(decoded.getSparseInputs()).containsExactly(realInput, null, null);
+        assertThat(PatternVirtualInputHelper.getCatalysts(encoded).entries()).containsExactly(
+                new PatternCatalyst(1, firstCatalyst),
+                new PatternCatalyst(2, secondCatalyst));
+    }
+
+    @Test
+    void markedVirtualCircuitUsesDedicatedMetadataInsteadOfCatalystMetadata() {
+        var realInput = GenericStack.fromItemStack(new ItemStack(Items.DIAMOND));
+        var circuit = GenericStack.fromItemStack(IntCircuitBehaviour.stack(3));
+        var output = GenericStack.fromItemStack(new ItemStack(Items.STICK));
+
+        var encoded = PatternVirtualInputHelper.encodeProcessingPattern(
+                List.of(realInput, circuit),
+                List.of(output),
+                List.of(new PatternCatalyst(1, circuit)));
+
+        assertThat(GTCEuPatternMetadataBridge.getVirtualCircuitFromEncodedPattern(encoded)).hasValue(3);
+        assertThat(PatternVirtualInputHelper.getCatalysts(encoded).entries()).isEmpty();
     }
 
     @Test
@@ -169,7 +236,7 @@ class AEProcessingPatternTest {
         assertThat(decoded.getInputs()).hasSize(1);
         assertThat(decoded.getInputs()[0].getPossibleInputs()[0]).isEqualTo(realInput);
         assertThat(decoded.getTooltip(mock(Level.class), TooltipFlag.NORMAL).getInputs())
-                .containsExactly(realInput, firstCircuitInput);
+                .containsExactly(realInput);
     }
 
     @Test
@@ -192,20 +259,7 @@ class AEProcessingPatternTest {
         assertThat(decoded.getInputs()).hasSize(1);
         assertThat(decoded.getInputs()[0].getPossibleInputs()[0]).isEqualTo(realInput);
         assertThat(decoded.getTooltip(mock(Level.class), TooltipFlag.NORMAL).getInputs())
-                .containsExactly(realInput, GenericStack.fromItemStack(IntCircuitBehaviour.stack(7)));
-    }
-
-    @Test
-    void transferDoesNotAppendVirtualCircuitWhenIngredientAlreadyContainsOne() {
-        var realInput = GenericStack.fromItemStack(new ItemStack(Items.DIAMOND));
-        var circuitInput = GenericStack.fromItemStack(IntCircuitBehaviour.stack(7));
-        var ingredients = List.of(List.of(realInput), List.of(circuitInput));
-
-        var appended = GTCEuPatternMetadataBridge.appendVirtualCircuitIngredient(
-                ingredients,
-                java.util.OptionalInt.of(24));
-
-        assertThat(appended).containsExactlyElementsOf(ingredients);
+                .containsExactly(realInput);
     }
 
     @Test

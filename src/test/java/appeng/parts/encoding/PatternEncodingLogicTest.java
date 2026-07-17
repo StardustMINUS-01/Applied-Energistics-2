@@ -159,6 +159,7 @@ class PatternEncodingLogicTest {
         assertThat(logic.getEncodedInputInv().getStack(0)).isEqualTo(realInput);
         assertThat(logic.getEncodedInputInv().getStack(1))
                 .isEqualTo(GenericStack.fromItemStack(IntCircuitBehaviour.stack(7)));
+        assertThat(logic.isCatalyst(1)).isTrue();
         assertThat(logic.getEncodedInputInv().getStack(2)).isNull();
         assertThat(logic.getEncodedOutputInv().getStack(0)).isEqualTo(output);
     }

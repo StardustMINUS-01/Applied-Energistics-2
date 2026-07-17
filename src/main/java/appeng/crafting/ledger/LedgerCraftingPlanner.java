@@ -103,6 +103,8 @@ public final class LedgerCraftingPlanner {
             flags.multiplePaths = true;
         }
         var candidateMissingItems = new KeyCounter();
+        IPatternDetails firstUnresolvedPattern = null;
+        long firstUnresolvedPatternTimes = 0;
         for (var pattern : availablePatterns) {
             if (request.remainingAmount() == 0) {
                 break;
@@ -121,6 +123,10 @@ public final class LedgerCraftingPlanner {
                     var attempt = planPatternAttempt(context, pattern, 1, patternTimes, attemptedPatternTimes, tasks,
                             attemptMissingItems, flags, stats, parentRequests);
                     if (attempt.maxTimes <= 0) {
+                        if (firstUnresolvedPattern == null) {
+                            firstUnresolvedPattern = pattern;
+                            firstUnresolvedPatternTimes = divideRoundingUp(request.remainingAmount(), outputCount);
+                        }
                         merge(candidateMissingItems, attemptMissingItems);
                         break;
                     }
@@ -137,6 +143,10 @@ public final class LedgerCraftingPlanner {
                 var attempt = planPatternAttempt(context, pattern, requestedTimes, patternTimes, attemptedPatternTimes,
                         tasks, patternMissingItems, flags, stats, parentRequests);
                 if (attempt.maxTimes <= 0) {
+                    if (firstUnresolvedPattern == null) {
+                        firstUnresolvedPattern = pattern;
+                        firstUnresolvedPatternTimes = divideRoundingUp(request.remainingAmount(), outputCount);
+                    }
                     merge(candidateMissingItems, patternMissingItems);
                     continue;
                 }
@@ -156,6 +166,9 @@ public final class LedgerCraftingPlanner {
                 missingItems.add(request.what(), request.remainingAmount());
             } else {
                 merge(missingItems, candidateMissingItems);
+                if (firstUnresolvedPattern != null) {
+                    tasks.add(new PatternCraftingTask(firstUnresolvedPattern, firstUnresolvedPatternTimes));
+                }
             }
         }
     }

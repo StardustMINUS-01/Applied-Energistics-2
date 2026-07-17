@@ -63,6 +63,8 @@ import appeng.client.gui.me.crafting.CraftingStatusScreen;
 import appeng.client.gui.me.crafting.SetStockAmountScreen;
 import appeng.client.gui.me.items.CraftingTermScreen;
 import appeng.client.gui.me.items.PatternEncodingTermScreen;
+import appeng.client.gui.me.items.PatternUploadManagementScreen;
+import appeng.client.gui.me.items.PatternUploadSelectScreen;
 import appeng.client.gui.me.networktool.NetworkStatusScreen;
 import appeng.client.gui.me.networktool.NetworkToolScreen;
 import appeng.client.gui.me.patternaccess.PatternAccessTermScreen;
@@ -101,6 +103,8 @@ import appeng.menu.me.crafting.CraftingStatusMenu;
 import appeng.menu.me.items.BasicCellChestMenu;
 import appeng.menu.me.items.CraftingTermMenu;
 import appeng.menu.me.items.PatternEncodingTermMenu;
+import appeng.menu.me.items.PatternUploadManagementMenu;
+import appeng.menu.me.items.PatternUploadSelectMenu;
 import appeng.menu.me.items.WirelessCraftingTermMenu;
 import appeng.menu.me.networktool.NetworkStatusMenu;
 import appeng.menu.me.networktool.NetworkToolMenu;
@@ -184,6 +188,14 @@ public final class InitScreens {
                 PatternEncodingTermMenu.TYPE,
                 PatternEncodingTermScreen::new,
                 "/screens/terminals/pattern_encoding_terminal.json");
+        InitScreens.<PatternUploadSelectMenu, PatternUploadSelectScreen>register(event,
+                PatternUploadSelectMenu.TYPE,
+                PatternUploadSelectScreen::new,
+                "/screens/pattern_upload_select.json");
+        InitScreens.<PatternUploadManagementMenu, PatternUploadManagementScreen>register(event,
+                PatternUploadManagementMenu.TYPE,
+                PatternUploadManagementScreen::new,
+                "/screens/pattern_upload_management.json");
         InitScreens.<PatternAccessTermMenu, PatternAccessTermScreen<PatternAccessTermMenu>>register(event,
                 PatternAccessTermMenu.TYPE, PatternAccessTermScreen::new,
                 "/screens/terminals/pattern_access_terminal.json");
